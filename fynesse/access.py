@@ -254,31 +254,6 @@ class CBKExplorer:
     def collect_file_links(self, url, allowed_exts=(".pdf", ".xls", ".xlsx", ".csv")):
         _, soup = self.fetch(url)
         if not soup:
-            return []
-        found = []
-        for a in soup.find_all("a", href=True):
-            href = a["href"].strip()
-            ab = self.abs_link(url, href)
-            if not ab:
-                continue
-            # only same domain (safety)
-            if urlparse(ab).netloc.endswith("centralbank.go.ke") or urlparse(ab).netloc == "":
-                if any(ab.lower().endswith(ext) for ext in allowed_exts):
-                    found.append({"page":url, "text": a.get_text(strip=True), "file_url":ab})
-        # dedupe
-        seen = set()
-        dedup = []
-        for row in found:
-            if row["file_url"] not in seen:
-                dedup.append(row)
-                seen.add(row["file_url"])
-        df = pd.DataFrame(dedup)
-        print(f"Found {len(df)} file links on {url}")
-        return df
-
-    def collect_file_links(self, url, allowed_exts=(".pdf", ".xls", ".xlsx", ".csv")):
-        _, soup = self.fetch(url)
-        if not soup:
             return pd.DataFrame()   # instead of returning []
 
         found = []
@@ -303,6 +278,32 @@ class CBKExplorer:
         df = pd.DataFrame(dedup)
         print(f"Found {len(df)} file links on {url}")
         return df
+
+
+    def crawl_links_for_files(self, start_url, allowed_exts=(".pdf", ".xls", ".xlsx", ".csv"), max_pages=50):
+        _, soup = self.fetch(start_url)
+        if not soup:
+            return []
+        pages = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            ab = self.abs_link(start_url, href)
+            if not ab:
+                continue
+            # only same domain
+            if urlparse(ab).netloc.endswith("centralbank.go.ke"):
+                pages.append(ab)
+        pages = list(dict.fromkeys(pages))[:max_pages]
+        print(f"Will inspect {len(pages)} linked pages from {start_url}")
+        results = []
+        for p in tqdm(pages):
+            df = self.collect_file_links(p, allowed_exts=allowed_exts)
+            if not df.empty:
+                results.append(df)
+            time.sleep(0.8)
+        if results:
+            return pd.concat(results, ignore_index=True)
+        return pd.DataFrame()
 
 def download_files(file_links, root_dir, save_dir,
                    allowed_exts=(".pdf", ".xls", ".xlsx", ".csv"),
