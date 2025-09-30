@@ -53,6 +53,14 @@ Best Practice on Implementation
 from typing import Any, Union
 import pandas as pd
 import logging
+import requests
+from io import BytesIO
+import time, re
+from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
+from urllib.robotparser import RobotFileParser
+from collections import Counter
+from tqdm.auto import tqdm
 
 # Set up basic logging
 logging.basicConfig(
@@ -126,3 +134,110 @@ def data() -> Union[pd.DataFrame, None]:
         logger.error(f"Unexpected error loading data: {e}")
         print(f"Error loading data: {e}")
         return None
+
+class CBKExplorer:
+    def __init__(self, github_username):
+        self.user_agent = f"MshauriFedhaBot/0.1 (+https://github.com/{github_username}/mshaurifedha)"
+        self.session = requests.Session()
+        self.session.headers.update({"User-Agent": self.user_agent})
+
+    def is_allowed_by_robots(self, base_url, target_url):
+        """Check robots.txt for permission."""
+        parsed = urlparse(base_url)
+        robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
+        rp = RobotFileParser()
+        try:
+            rp.set_url(robots_url)
+            rp.read()
+            return rp.can_fetch(self.user_agent, target_url)
+        except Exception as e:
+            print(f"[robots] Could not read robots.txt ({e}). Proceed cautiously.")
+            return False
+
+    def fetch(self, url, timeout=25):
+        """Fetch url with basic error handling. Returns (resp, soup) or (None,None)."""
+        try:
+            r = self.session.get(url, timeout=timeout)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "lxml")
+            return r, soup
+        except Exception as e:
+            print(f"[fetch] Error fetching {url}: {e}")
+            return None, None
+
+    def abs_link(self, base, href):
+        """Make absolute link from relative href."""
+        if not href:
+            return None
+        return urljoin(base, href)
+
+    def explore_url(self, url, print_anchors=40):
+        """Explore a CBK URL: meta, headings, nav links, anchor samples, file-like links."""
+        print("URL:", url)
+        print("Allowed by robots.py? ->", self.is_allowed_by_robots(url, url))
+        resp, soup = self.fetch(url)
+        if not resp:
+            return None
+
+        # Basic meta
+        print("Status code:", resp.status_code)
+        title = soup.title.string.strip() if soup.title else ""
+        print("Title:", title)
+        desc = ""
+        meta_desc = soup.find("meta", attrs={"name":"description"}) or soup.find("meta", attrs={"property":"og:description"})
+        if meta_desc and meta_desc.get("content"):
+            desc = meta_desc["content"].strip()
+            print("Meta description:", desc[:300])
+
+        # Headings
+        h1s = [h.get_text(strip=True) for h in soup.find_all("h1")]
+        h2s = [h.get_text(strip=True) for h in soup.find_all("h2")]
+        print("H1s:", h1s[:5])
+        print("H2s:", h2s[:8])
+
+        # Nav / header anchors
+        navs = soup.find_all("nav")
+        if navs:
+            print(f"Found {len(navs)} <nav> block(s). Sample nav links:")
+            nav_links = []
+            for nav in navs:
+                for a in nav.find_all("a", href=True):
+                    nav_links.append((a.get_text(strip=True), self.abs_link(url, a["href"])))
+            for t, link in nav_links[:20]:
+                print(" -", t or "<no-text>", "->", link)
+        else:
+            print("No <nav> block found (or it's rendered by JS).")
+
+        # Sample anchors across page
+        anchors = []
+        for a in soup.find_all("a", href=True):
+            text = a.get_text(strip=True)
+            href = a["href"].strip()
+            anchors.append((text, self.abs_link(url, href)))
+        anchors = [a for a in anchors if a[1] is not None]
+        print(f"Total anchors on page: {len(anchors)}. Showing first {min(print_anchors,len(anchors))}:")
+        for t, link in anchors[:print_anchors]:
+            print(" *", (t[:60] or "<no-text>"), "->", link)
+
+        # Class name frequencies
+        classes = []
+        for tag in soup.find_all(True):
+            cls = tag.get("class")
+            if cls:
+                classes.extend(cls if isinstance(cls, list) else [cls])
+        class_counts = Counter(classes)
+        print("Top 15 classes used on page (class_name:count):")
+        for k,v in class_counts.most_common(15):
+            print("  ", k, ":", v)
+
+        # Links that look like files
+        file_like = []
+        for text, link in anchors:
+            if re.search(r"\.pdf$|\.xls$|\.xlsx$|\.csv$", link, re.IGNORECASE):
+                file_like.append((text, link))
+        print("File-like links found on page:", len(file_like))
+        for t, l in file_like[:20]:
+            print("  FILE:", (t[:80] or "<no-text>"), "->", l)
+
+        return {"title": title, "anchors": anchors, "file_links": file_like, "class_counts": class_counts}
+
