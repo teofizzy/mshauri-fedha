@@ -241,6 +241,137 @@ class CBKExplorer:
 
         return {"title": title, "anchors": anchors, "file_links": file_like, "class_counts": class_counts}
 
+    def inspect_pages(self, urls):
+        results = {}
+        for u in urls:
+            print("\n" + "="*80)
+            print("Inspecting:", u)
+            out = self.explore_url(u, print_anchors=80)
+            results[u] = out
+            time.sleep(1.0)  # polite pause
+        return results
+
+    def collect_file_links(self, url, allowed_exts=(".pdf", ".xls", ".xlsx", ".csv")):
+        _, soup = self.fetch(url)
+        if not soup:
+            return []
+        found = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            ab = self.abs_link(url, href)
+            if not ab:
+                continue
+            # only same domain (safety)
+            if urlparse(ab).netloc.endswith("centralbank.go.ke") or urlparse(ab).netloc == "":
+                if any(ab.lower().endswith(ext) for ext in allowed_exts):
+                    found.append({"page":url, "text": a.get_text(strip=True), "file_url":ab})
+        # dedupe
+        seen = set()
+        dedup = []
+        for row in found:
+            if row["file_url"] not in seen:
+                dedup.append(row)
+                seen.add(row["file_url"])
+        df = pd.DataFrame(dedup)
+        print(f"Found {len(df)} file links on {url}")
+        return df
+
+    def crawl_links_for_files(self, start_url, allowed_exts=(".pdf", ".xls", ".xlsx", ".csv"), max_pages=50):
+        _, soup = self.fetch(start_url)
+        if not soup:
+            return []
+        pages = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            ab = self.abs_link(start_url, href)
+            if not ab:
+                continue
+            # only same domain
+            if urlparse(ab).netloc.endswith("centralbank.go.ke"):
+                pages.append(ab)
+        pages = list(dict.fromkeys(pages))[:max_pages]
+        print(f"Will inspect {len(pages)} linked pages from {start_url}")
+        results = []
+        for p in tqdm(pages):
+            df = self.collect_file_links(p, allowed_exts=allowed_exts)
+            if not df.empty:
+                results.append(df)
+            time.sleep(0.8)
+        if results:
+            return pd.concat(results, ignore_index=True)
+        return pd.DataFrame()
+
+def download_files(file_links, root_dir, save_dir,
+                   allowed_exts=(".pdf", ".xls", ".xlsx", ".csv"),
+                   overwrite=False):
+    """
+    Download multiple files from a list of (title, url) pairs.
+
+    Args:
+        file_links: list of (title, url) tuples, or list of dicts {"text":..., "file_url":...}
+        root_dir: base folder to save under
+        save_dir: subdirectory under root_dir
+        allowed_exts: file extensions to allow
+        overwrite: if True, re-download even if file exists
+
+    Returns:
+        metadata: list of dicts (title, url, local_path, size, status)
+    """
+    save_dir_path = os.path.join(root_dir, save_dir)
+    os.makedirs(save_dir_path, exist_ok=True)
+    metadata = []
+
+    # Normalize file_links into [(title, url), ...]
+    norm_links = []
+    for item in file_links:
+        if isinstance(item, tuple):
+            title, url = item
+        elif isinstance(item, dict):
+            title, url = item.get("text", "file"), item.get("file_url")
+        else:
+            continue
+        norm_links.append((title.strip(), url.strip()))
+
+    for title, url in norm_links:
+        # filter by extension
+        if not any(url.lower().endswith(ext) for ext in allowed_exts):
+            continue
+
+        # guess extension from URL
+        ext = os.path.splitext(urlparse(url).path)[1] or ".bin"
+        # clean filename
+        safe_title = re.sub(r"[^A-Za-z0-9._-]+", "_", title)[:100]
+        fname = f"{safe_title}{ext}"
+        path = os.path.join(save_dir_path, fname)
+
+        if os.path.exists(path) and not overwrite:
+            print(f"[skip] {fname} already exists.")
+            status = "skipped"
+        else:
+            try:
+                print(f"[download] {title} -> {fname}")
+                r = requests.get(url, stream=True, timeout=60)
+                r.raise_for_status()
+                with open(path, "wb") as f:
+                    for chunk in r.iter_content(8192):
+                        if chunk:
+                            f.write(chunk)
+                status = "ok"
+            except Exception as e:
+                print(f"[error] Failed: {url} ({e})")
+                status = "error"
+
+        size = os.path.getsize(path) if os.path.exists(path) else 0
+        metadata.append({
+            "title": title,
+            "url": url,
+            "local_path": path,
+            "size": size,
+            "status": status
+        })
+
+    return metadata
+
 import os, subprocess, importlib, sys
 
 def load_repo(repo):
