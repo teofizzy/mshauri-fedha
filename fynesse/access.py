@@ -57,10 +57,13 @@ import requests
 from io import BytesIO
 import time, re
 from bs4 import BeautifulSoup
+import urllib3
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 from collections import Counter
 from tqdm.auto import tqdm
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Set up basic logging
 logging.basicConfig(
@@ -157,7 +160,7 @@ class CBKExplorer:
     def fetch(self, url, timeout=25):
         """Fetch url with basic error handling. Returns (resp, soup) or (None,None)."""
         try:
-            r = self.session.get(url, timeout=timeout)
+            r = self.session.get(url, timeout=timeout, verify=False)
             r.raise_for_status()
             soup = BeautifulSoup(r.text, "lxml")
             return r, soup
