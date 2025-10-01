@@ -58,6 +58,7 @@ from io import BytesIO
 import time, re
 from bs4 import BeautifulSoup
 import urllib3
+import certifi
 from urllib.parse import urljoin, urlparse
 from urllib.robotparser import RobotFileParser
 from collections import Counter
@@ -157,16 +158,79 @@ class CBKExplorer:
             print(f"[robots] Could not read robots.txt ({e}). Proceed cautiously.")
             return False
 
-    def fetch(self, url, timeout=25):
-        """Fetch url with basic error handling. Returns (resp, soup) or (None,None)."""
+    def fetch(self, url, timeout=25, allow_proxy_fallback=True):
+        """
+        Robust fetch that tries:
+        1) requests with certifi bundle (secure)
+        2) http fallback (if https fails)
+        3) requests with verify=False (insecure)
+        4) optional external proxy fetch (r.jina.ai) as last resort
+
+        Returns (response, soup) or (None, None)
+        """
+        # helper to parse response->soup
+        def resp_to_soup(r):
+            try:
+                r.raise_for_status()
+                return r, BeautifulSoup(r.text, "lxml")
+            except Exception:
+                return None, None
+
+        # 1) Try with certifi (preferred)
         try:
-            r = self.session.get(url, timeout=timeout, verify=False)
-            r.raise_for_status()
-            soup = BeautifulSoup(r.text, "lxml")
-            return r, soup
+            r = self.session.get(url, timeout=timeout, verify=certifi.where())
+            ok_resp, soup = resp_to_soup(r)
+            if ok_resp:
+                return ok_resp, soup
+        except requests.exceptions.SSLError as ssl_err:
+            print(f"[fetch] SSL error with certifi for {url}: {ssl_err}")
         except Exception as e:
-            print(f"[fetch] Error fetching {url}: {e}")
-            return None, None
+            print(f"[fetch] Primary attempt failed for {url}: {e}")
+
+        # 2) Try http fallback if URL is https
+        try:
+            parsed = urlparse(url)
+            if parsed.scheme == "https":
+                http_url = url.replace("https://", "http://", 1)
+                try:
+                    r = self.session.get(http_url, timeout=timeout)
+                    ok_resp, soup = resp_to_soup(r)
+                    if ok_resp:
+                        print(f"[fetch] HTTP fallback succeeded for {http_url}")
+                        return ok_resp, soup
+                except Exception as e:
+                    print(f"[fetch] HTTP fallback failed for {http_url}: {e}")
+        except Exception as e:
+            print(f"[fetch] HTTP fallback: error preparing URL: {e}")
+
+        # 3) Try insecure (verify=False) as last direct option
+        try:
+            print(f"[fetch] Trying insecure fetch (verify=False) for {url} — not recommended for sensitive data.")
+            r = self.session.get(url, timeout=timeout, verify=False)
+            ok_resp, soup = resp_to_soup(r)
+            if ok_resp:
+                return ok_resp, soup
+        except Exception as e:
+            print(f"[fetch] Insecure fetch also failed for {url}: {e}")
+
+        # 4) Optional: external proxy/relay (last resort)
+        if allow_proxy_fallback:
+            try:
+                # Jina.ai simple fetch service: returns rendered HTML as text
+                # NOTE: this is an external service — use only for public/cached pages.
+                proxy_url = "https://r.jina.ai/http://" + url.replace("https://", "").replace("http://", "")
+                print(f"[fetch] Trying proxy fetch via {proxy_url}")
+                r = requests.get(proxy_url, timeout=30)  # using plain requests (no verify issues; it's https to jina)
+                if r.status_code == 200 and r.text:
+                    return r, BeautifulSoup(r.text, "lxml")
+                else:
+                    print(f"[fetch] Proxy fetch returned status {r.status_code}")
+            except Exception as e:
+                print(f"[fetch] Proxy fetch failed: {e}")
+
+        # give up
+        print(f"[fetch] All fetch strategies failed for {url}")
+        return None, None
 
     def abs_link(self, base, href):
         """Make absolute link from relative href."""
