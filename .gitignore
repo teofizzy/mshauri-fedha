@@ -1,0 +1,108 @@
+# -------------------------------------------------------------------------
+# 1. Python & Virtual Environments (Standard)
+# -------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+env/
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# -------------------------------------------------------------------------
+# 2. Security & Secrets (CRITICAL)
+# Never commit your API keys (HuggingFace, OpenAI, etc.)
+# -------------------------------------------------------------------------
+.env
+.env.local
+.env.*
+secrets.json
+credentials.json
+
+# -------------------------------------------------------------------------
+# 3. Large AI Models & Weights (Hugging Face / PyTorch)
+# These files are GBs in size; use DVC to track them instead.
+# -------------------------------------------------------------------------
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+models/
+weights/
+checkpoints/
+lora-adapters/
+
+# -------------------------------------------------------------------------
+# 4. Data & RAG Stores (MshauriFedha Specific)
+# Ignore raw PDFs and local vector databases (Chroma/Faiss).
+# -------------------------------------------------------------------------
+data/
+datasets/
+corpus/
+# Ignore ChromaDB and Faiss local persistence folders
+chroma_db/
+chroma_storage/
+faiss_indexes/
+storage/ 
+
+# -------------------------------------------------------------------------
+# 5. CSCS & HPC Specifics
+# Ignore the huge container images and Slurm log files.
+# -------------------------------------------------------------------------
+*.sif
+*.sif.*
+*.tar.gz
+slurm-*.out
+slurm-*.err
+core.*
+
+# -------------------------------------------------------------------------
+# 6. Jupyter Notebooks
+# -------------------------------------------------------------------------
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+# Optional: if you don't want to commit notebook outputs (just code)
+# *.ipynb (Uncomment this if you only want to commit .py scripts)
+
+# -------------------------------------------------------------------------
+# 7. DVC (Data Version Control)
+# We ignore the local cache/config but KEEP the .dvc files.
+# -------------------------------------------------------------------------
+/dvc_storage
+.dvc/config.local
+.dvc/tmp
+.dvc/cache
+
+# -------------------------------------------------------------------------
+# 8. IDE & Editors
+# -------------------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+
+# -------------------------------------------------------------------------
+# 9. Docker / Deployment
+# -------------------------------------------------------------------------
+docker-compose.override.yml
+.coverage
+htmlcov/
+*.err
+*.out
