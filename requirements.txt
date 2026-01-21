@@ -1,0 +1,9 @@
+streamlit
+pandas
+numpy
+langchain-ollama
+langchain-community
+langchain-chroma
+chromadb
+huggingface_hub
+pysqlite3-binary

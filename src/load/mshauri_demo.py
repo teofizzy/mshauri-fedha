@@ -1,6 +1,8 @@
 import os
 import re
 import sys
+import io
+
 # These imports are stable and have worked in your previous logs
 from langchain_ollama import ChatOllama
 from langchain_community.utilities import SQLDatabase
@@ -26,6 +28,23 @@ class SimpleTool:
     def run(self, input_data):
         return self.func(input_data)
 
+class PythonREPLTool(SimpleTool):
+    def __init__(self):
+        super().__init__(
+            name="python_calculator",
+            func=self.execute_python,
+            description="Useful for ANY math, statistical analysis, or data transformation. Input should be valid Python code. PRINT the final result."
+        )
+
+    def execute_python(self, code):
+        try:
+            f = io.StringIO()
+            with redirect_stdout(f):
+                exec(code, {'__builtins__': __builtins__}, {}) 
+            return f.getvalue()
+        except Exception as e:
+            return f"Error executing code: {e}"
+
 # --- 2. REPLACEMENT CLASS FOR THE AGENT ---
 class SimpleReActAgent:
     """A manual ReAct loop that doesn't rely on langchain.agents"""
@@ -37,8 +56,16 @@ class SimpleReActAgent:
         self.tool_desc = "\n".join([f"{t.name}: {t.description}" for t in tools])
         self.tool_names = ", ".join([t.name for t in tools])
         
-        # Hardcoded ReAct Prompt
-        self.prompt_template = """Answer the following questions as best you can. You have access to the following tools:
+        self.prompt_template = """You are Mshauri Fedha, a senior financial advisor for Kenya. 
+        Your goal is to provide accurate, data-backed advice.
+        
+        RULES:
+        1. CITATIONS: You MUST cite your sources. 
+           - SQL Data ->
+           - Text Data ->
+           - Code ->
+        2. ADVICE: After presenting facts, add an "Advisory Opinion" section.
+        3. CONFIDENCE: If data is old, state "Low Confidence".
 
 {tool_desc}
 
@@ -51,7 +78,7 @@ Action Input: the input to the action
 Observation: the result of the action
 ... (this Thought/Action/Action Input/Observation can repeat N times)
 Thought: I now know the final answer
-Final Answer: the final answer to the original input question
+Final Answer: the final answer to the original input question with citations
 
 Begin!
 
@@ -131,8 +158,8 @@ def create_mshauri_agent(
     sql_db_path=DEFAULT_SQL_DB,
     vector_db_path=DEFAULT_VECTOR_DB,
     llm_model=DEFAULT_LLM_MODEL,
-    ollama_url=DEFAULT_OLLAMA_URL
-):
+    ollama_url=DEFAULT_OLLAMA_URL,
+    temperature=0.1):
     print(f"  Initializing Mshauri Fedha (Model: {llm_model})...")
     
     # 1. Initialize LLM
@@ -159,7 +186,7 @@ def create_mshauri_agent(
         embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=ollama_url)
         vectorstore = Chroma(persist_directory=vector_db_path, embedding_function=embeddings)
         docs = vectorstore.similarity_search(query, k=4)
-        return "\n\n".join([d.page_content for d in docs])
+        return "\n\n".join([f"[Score: {score:.2f}] {d.page_content}" for d, score in docs])
 
     # Use our SimpleTool wrapper instead of importing from langchain
     retriever_tool = SimpleTool(
