@@ -1,35 +1,39 @@
-# Use the official Python minimal image (Best for CPU Basic tier)
+# Use the official Python minimal image
 FROM python:3.10-slim
 
 # 1. Install system tools
-#    Added 'zstd' which is now REQUIRED by the Ollama installer
+#    CRITICAL: Added 'git-lfs' so we download the REAL database files, not pointers.
+#    Added 'zstd' for Ollama.
 RUN apt-get update && apt-get install -y \
     curl \
     git \
+    git-lfs \
     build-essential \
     zstd \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && git lfs install  # <--- Initialize LFS
 
-# 2. Install Ollama (Must be done as ROOT)
+# 2. Install Ollama (Root)
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
-# 3. Setup User (Hugging Face Requirement)
+# 3. Setup User
 RUN useradd -m -u 1000 user
 USER user
 ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH
 
-# 4. Set Working Directory
+# 4. Workdir
 WORKDIR $HOME/app
 
-# 5. Install Python Requirements
+# 5. Requirements
 COPY --chown=user requirements.txt $HOME/app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 6. Copy Application Code
+# 6. Copy Code
 COPY --chown=user . $HOME/app
 
-# 7. STARTUP COMMAND
+# 7. Startup
+#    We clone the dataset. git-lfs ensures we get the big files.
 CMD git clone https://huggingface.co/datasets/teofizzy/mshauri-data data_download && \
     mv data_download/mshauri_fedha_v6.db . && \
     mv data_download/mshauri_fedha_chroma_db . && \
