@@ -14,8 +14,8 @@ from langchain_community.embeddings import OllamaEmbeddings
 DEFAULT_SQL_DB = "sqlite:///mshauri_fedha_v6.db"
 DEFAULT_VECTOR_DB = "mshauri_fedha_chroma_db"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
-DEFAULT_LLM_MODEL = "qwen3:32b"
-DEFAULT_OLLAMA_URL = "http://127.0.0.1:25000"
+DEFAULT_LLM_MODEL = "qwen2.5:7b" #"qwen3:32b"
+DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
 # --- 1. REPLACEMENT CLASS FOR 'Tool' ---
 class SimpleTool:
