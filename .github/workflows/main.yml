@@ -1,0 +1,25 @@
+name: Sync to Hugging Face Hub
+on:
+  push:
+    branches: [main]  # Or 'master' if your branch is named master
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          lfs: true
+      
+      - name: Push to hub
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # Replace 'teofizzy' with your username and 'mshauri-fedha' with your Space name
+          HF_USERNAME: teofizzy 
+          SPACE_NAME: mshauri-fedha
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+          git remote add space https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME
+          git push --force space main

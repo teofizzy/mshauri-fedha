@@ -1,3 +1,15 @@
+---
+title: Mshauri Fedha
+emoji: 🦁
+colorFrom: green
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+---
+
+
 # Mshauri Fedha 🇰🇪
 
 **An AI-Powered Financial Research Assistant for the Kenyan Economy.**
