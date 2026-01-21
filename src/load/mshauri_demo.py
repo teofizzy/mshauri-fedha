@@ -2,8 +2,7 @@ import os
 import re
 import sys
 import io
-
-# These imports are stable and have worked in your previous logs
+from contextlib import redirect_stdout # <--- FIXED: Missing Import
 from langchain_ollama import ChatOllama
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
@@ -14,7 +13,7 @@ from langchain_community.embeddings import OllamaEmbeddings
 DEFAULT_SQL_DB = "sqlite:///mshauri_fedha_v6.db"
 DEFAULT_VECTOR_DB = "mshauri_fedha_chroma_db"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
-DEFAULT_LLM_MODEL = "qwen2.5:7b" #"qwen3:32b"
+DEFAULT_LLM_MODEL = "qwen2.5:7b" # qwen 3:32b
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
 # --- 1. REPLACEMENT CLASS FOR 'Tool' ---
@@ -52,33 +51,39 @@ class SimpleReActAgent:
         self.llm = llm
         self.tools = {t.name: t for t in tools}
         self.verbose = verbose
-        # Create the tool description string for the prompt
         self.tool_desc = "\n".join([f"{t.name}: {t.description}" for t in tools])
         self.tool_names = ", ".join([t.name for t in tools])
         
+        # IMPROVED PROMPT: Explicitly tells agent to switch strategies if SQL fails
         self.prompt_template = """You are Mshauri Fedha, a senior financial advisor for Kenya. 
-        Your goal is to provide accurate, data-backed advice.
-        
-        RULES:
-        1. CITATIONS: You MUST cite your sources. 
-           - SQL Data ->
-           - Text Data ->
-           - Code ->
-        2. ADVICE: After presenting facts, add an "Advisory Opinion" section.
-        3. CONFIDENCE: If data is old, state "Low Confidence".
+Your goal is to provide accurate, data-backed advice.
 
+RULES:
+1. CITATIONS: You MUST cite your sources (,).
+    - SQL Data ->
+    - Text Data -> 
+    - Code -> PythonREPLTool
+2. STRATEGY: 
+    - First, check SQL tables ('sql_db_list_tables').
+    - IF the tables listed do NOT match the user's question, IMMEDIATELY switch to 'search_financial_reports_and_news'. 
+    - Do NOT keep asking for tables if they are clearly not there.
+3. ADVICE: After presenting facts, add an "Advisory Opinion" section.
+4. CONFIDENCE: If data is old, state "Low Confidence".
+
+Tools Available:
 {tool_desc}
 
 Use the following format:
 
 Question: the input question you must answer
 Thought: you should always think about what to do
+Thought: look at the tools and the question. Which tool is best?
 Action: the action to take, should be one of [{tool_names}]
 Action Input: the input to the action
 Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question with citations
+... (repeat Thought/Action/Observation as needed)
+Thought: I have enough info.
+Final Answer: the final answer with citations.
 
 Begin!
 
@@ -89,7 +94,7 @@ Thought:{agent_scratchpad}"""
         query = inputs["input"]
         scratchpad = ""
         
-        print(f" Starting Agent Loop for: '{query}'")
+        print(f"🚀 Starting Agent Loop for: '{query}'")
         
         for step in range(10): # Max 10 steps
             # Fill the prompt
@@ -101,7 +106,6 @@ Thought:{agent_scratchpad}"""
             )
             
             # Call LLM
-            # stop=["\nObservation:"] prevents the LLM from hallucinating the tool output
             response = self.llm.invoke(prompt, stop=["\nObservation:"])
             response_text = response.content
             
@@ -110,7 +114,6 @@ Thought:{agent_scratchpad}"""
 
             scratchpad += response_text
 
-            # Check for completion
             if "Final Answer:" in response_text:
                 return {"output": response_text.split("Final Answer:")[-1].strip()}
 
@@ -118,25 +121,28 @@ Thought:{agent_scratchpad}"""
             action_match = re.search(r"Action:\s*(.*?)\n", response_text)
             input_match = re.search(r"Action Input:\s*(.*)", response_text)
             
-            if action_match and input_match:
+            if action_match:
                 action_name = action_match.group(1).strip()
-                action_input = input_match.group(1).strip()
+                # Handle empty input gracefully (regex .* matches empty string)
+                action_input = input_match.group(1).strip() if input_match else ""
                 
-                # Execute Tool
                 if action_name in self.tools:
                     if self.verbose:
-                        print(f"🛠️  Calling '{action_name}' with: {action_input}")
+                        print(f"🛠️  Calling '{action_name}' with: '{action_input}'")
                     
                     try:
-                        # Handle both SimpleTool (.run) and LangChain Tools (.invoke or .run)
                         tool = self.tools[action_name]
                         if hasattr(tool, 'invoke'):
                             tool_result = tool.invoke(action_input)
                         else:
                             tool_result = tool.run(action_input)
-                            
                     except Exception as e:
                         tool_result = f"Error executing tool: {e}"
+                    
+                    # --- ADDED LOGGING HERE ---
+                    if self.verbose:
+                        # Print first 200 chars so we can see if it worked
+                        print(f"👀 Observation: {str(tool_result)[:200]}...")
                         
                     observation = f"\nObservation: {tool_result}\n"
                 else:
@@ -144,9 +150,8 @@ Thought:{agent_scratchpad}"""
                 
                 scratchpad += observation
             else:
-                # Fallback: if no action found but also no Final Answer
                 if "Action:" in response_text:
-                    scratchpad += "\nObservation: You provided an Action but no Action Input. Please provide the input.\n"
+                    scratchpad += "\nObservation: You provided an Action but formatting was unclear. Please use 'Action:' and 'Action Input:' clearly.\n"
                 else:
                     return {"output": response_text.strip()}
                     
@@ -158,48 +163,49 @@ def create_mshauri_agent(
     sql_db_path=DEFAULT_SQL_DB,
     vector_db_path=DEFAULT_VECTOR_DB,
     llm_model=DEFAULT_LLM_MODEL,
-    ollama_url=DEFAULT_OLLAMA_URL,
-    temperature=0.1):
-    print(f"  Initializing Mshauri Fedha (Model: {llm_model})...")
+    ollama_url=DEFAULT_OLLAMA_URL
+):
+    print(f"⚙️  Initializing Mshauri Fedha (Model: {llm_model})...")
     
     # 1. Initialize LLM
     try:
         llm = ChatOllama(model=llm_model, base_url=ollama_url, temperature=0.1)
     except Exception as e:
-        print(f" Error connecting to Ollama: {e}")
+        print(f"❌ Error connecting to Ollama: {e}")
         return None
 
     # 2. LEFT BRAIN (SQL)
     if "sqlite" in sql_db_path:
         real_path = sql_db_path.replace("sqlite:///", "")
         if not os.path.exists(real_path):
-             print(f"  Warning: SQL Database not found at {real_path}")
+             print(f"⚠️  Warning: SQL Database not found at {real_path}")
 
     db = SQLDatabase.from_uri(sql_db_path)
-    # The Toolkit returns standard LangChain tools, which our SimpleReActAgent can handle
     sql_toolkit = SQLDatabaseToolkit(db=db, llm=llm)
     sql_tools = sql_toolkit.get_tools()
 
     # 3. RIGHT BRAIN (Vector)
-    # We define the Retriever function manually
     def search_docs(query):
         embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=ollama_url)
         vectorstore = Chroma(persist_directory=vector_db_path, embedding_function=embeddings)
-        docs = vectorstore.similarity_search(query, k=4)
-        return "\n\n".join([f"[Score: {score:.2f}] {d.page_content}" for d, score in docs])
+        # --- FIXED: Use similarity_search_with_score ---
+        results = vectorstore.similarity_search_with_score(query, k=4)
+        return "\n\n".join([f"[Score: {score:.2f}] {d.page_content}" for d, score in results])
 
-    # Use our SimpleTool wrapper instead of importing from langchain
     retriever_tool = SimpleTool(
         name="search_financial_reports_and_news",
         func=search_docs,
         description="Searches CBK/KNBS reports and business news. Use this for qualitative questions (why, how, trends) or when SQL data is missing."
     )
+    
+    # 4. PYTHON TOOL
+    repl_tool = PythonREPLTool()
 
-    # 4. CREATE AGENT
-    tools = sql_tools + [retriever_tool]
+    # 5. CREATE AGENT
+    tools = sql_tools + [retriever_tool, repl_tool]
     agent = SimpleReActAgent(llm, tools)
     
-    print(" Mshauri Agent Ready (Zero-Dependency Mode).")
+    print("✅ Mshauri Agent Ready (Zero-Dependency Mode).")
     return agent
 
 def ask_mshauri(agent, query):
