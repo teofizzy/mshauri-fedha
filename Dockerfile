@@ -1,16 +1,16 @@
 # Use the official Python minimal image (Best for CPU Basic tier)
 FROM python:3.10-slim
 
-# 1. Install system tools (curl for Ollama, git for data cloning)
-#    (We are still ROOT here, which is correct)
+# 1. Install system tools
+#    Added 'zstd' which is now REQUIRED by the Ollama installer
 RUN apt-get update && apt-get install -y \
     curl \
     git \
     build-essential \
+    zstd \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Install Ollama (Must be done as ROOT)
-#    We do this BEFORE creating/switching to the 'user'
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
 # 3. Setup User (Hugging Face Requirement)
