@@ -3,6 +3,7 @@ pandas
 numpy
 langchain-ollama
 langchain-community
+langchain-huggingface
 langchain-chroma
 chromadb
 huggingface_hub

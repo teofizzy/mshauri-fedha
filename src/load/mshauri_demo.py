@@ -2,7 +2,8 @@ import os
 import re
 import sys
 import io
-from contextlib import redirect_stdout # <--- FIXED: Missing Import
+from contextlib import redirect_stdout
+from langchain_huggingface import HuggingFaceEndpoint 
 from langchain_ollama import ChatOllama
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
@@ -56,39 +57,39 @@ class SimpleReActAgent:
         
         # IMPROVED PROMPT: Explicitly tells agent to switch strategies if SQL fails
         self.prompt_template = """You are Mshauri Fedha, a senior financial advisor for Kenya. 
-Your goal is to provide accurate, data-backed advice.
+        Your goal is to provide accurate, data-backed advice.
 
-RULES:
-1. CITATIONS: You MUST cite your sources (,).
-    - SQL Data ->
-    - Text Data -> 
-    - Code -> PythonREPLTool
-2. STRATEGY: 
-    - First, check SQL tables ('sql_db_list_tables').
-    - IF the tables listed do NOT match the user's question, IMMEDIATELY switch to 'search_financial_reports_and_news'. 
-    - Do NOT keep asking for tables if they are clearly not there.
-3. ADVICE: After presenting facts, add an "Advisory Opinion" section.
-4. CONFIDENCE: If data is old, state "Low Confidence".
+        RULES:
+        1. CITATIONS: You MUST cite your sources (,).
+            - SQL Data ->
+            - Text Data -> 
+            - Code -> PythonREPLTool
+        2. STRATEGY: 
+            - First, check SQL tables ('sql_db_list_tables').
+            - IF the tables listed do NOT match the user's question, IMMEDIATELY switch to 'search_financial_reports_and_news'. 
+            - Do NOT keep asking for tables if they are clearly not there.
+        3. ADVICE: After presenting facts, add an "Advisory Opinion" section.
+        4. CONFIDENCE: If data is old, state "Low Confidence".
 
-Tools Available:
-{tool_desc}
+        Tools Available:
+        {tool_desc}
 
-Use the following format:
+        Use the following format:
 
-Question: the input question you must answer
-Thought: you should always think about what to do
-Thought: look at the tools and the question. Which tool is best?
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
-Observation: the result of the action
-... (repeat Thought/Action/Observation as needed)
-Thought: I have enough info.
-Final Answer: the final answer with citations.
+        Question: the input question you must answer
+        Thought: you should always think about what to do
+        Thought: look at the tools and the question. Which tool is best?
+        Action: the action to take, should be one of [{tool_names}]
+        Action Input: the input to the action
+        Observation: the result of the action
+        ... (repeat Thought/Action/Observation as needed)
+        Thought: I have enough info.
+        Final Answer: the final answer with citations.
 
-Begin!
+        Begin!
 
-Question: {input}
-Thought:{agent_scratchpad}"""
+        Question: {input}
+        Thought:{agent_scratchpad}"""
 
     def invoke(self, inputs):
         query = inputs["input"]
@@ -128,7 +129,7 @@ Thought:{agent_scratchpad}"""
                 
                 if action_name in self.tools:
                     if self.verbose:
-                        print(f"🛠️  Calling '{action_name}' with: '{action_input}'")
+                        print(f"Calling '{action_name}' with: '{action_input}'")
                     
                     try:
                         tool = self.tools[action_name]
@@ -142,7 +143,7 @@ Thought:{agent_scratchpad}"""
                     # --- ADDED LOGGING HERE ---
                     if self.verbose:
                         # Print first 200 chars so we can see if it worked
-                        print(f"👀 Observation: {str(tool_result)[:200]}...")
+                        print(f"Observation: {str(tool_result)[:200]}...")
                         
                     observation = f"\nObservation: {tool_result}\n"
                 else:
@@ -163,22 +164,31 @@ def create_mshauri_agent(
     sql_db_path=DEFAULT_SQL_DB,
     vector_db_path=DEFAULT_VECTOR_DB,
     llm_model=DEFAULT_LLM_MODEL,
-    ollama_url=DEFAULT_OLLAMA_URL
-):
+    ollama_url=DEFAULT_OLLAMA_URL):
     print(f"⚙️  Initializing Mshauri Fedha (Model: {llm_model})...")
     
     # 1. Initialize LLM
-    try:
-        llm = ChatOllama(model=llm_model, base_url=ollama_url, temperature=0.1)
-    except Exception as e:
-        print(f"❌ Error connecting to Ollama: {e}")
-        return None
+    hf_token = os.getenv("HF_TOKEN")
 
+    if hf_token:
+        print("Using Hugging Face Serverless API")
+        # We can use the massive 72B model because we aren't hosting it!
+        llm = HuggingFaceEndpoint(
+            repo_id="Qwen/Qwen2.5-72B-Instruct", 
+            task="text-generation",
+            max_new_tokens=512,
+            repetition_penalty=1.1,
+            temperature=0.2,
+            huggingfacehub_api_token=hf_token
+        )
+    else:
+        print("Using Local CPU Ollama (Slow)")
+        llm = ChatOllama(model="qwen2.5:7b", base_url=ollama_url, temperature=0.1)
     # 2. LEFT BRAIN (SQL)
     if "sqlite" in sql_db_path:
         real_path = sql_db_path.replace("sqlite:///", "")
         if not os.path.exists(real_path):
-             print(f"⚠️  Warning: SQL Database not found at {real_path}")
+             print(f"Warning: SQL Database not found at {real_path}")
 
     db = SQLDatabase.from_uri(sql_db_path)
     sql_toolkit = SQLDatabaseToolkit(db=db, llm=llm)
@@ -205,7 +215,7 @@ def create_mshauri_agent(
     tools = sql_tools + [retriever_tool, repl_tool]
     agent = SimpleReActAgent(llm, tools)
     
-    print("✅ Mshauri Agent Ready (Zero-Dependency Mode).")
+    print(" Mshauri Agent Ready (Zero-Dependency Mode).")
     return agent
 
 def ask_mshauri(agent, query):

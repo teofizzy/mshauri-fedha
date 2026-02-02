@@ -34,15 +34,16 @@ COPY --chown=user . $HOME/app
 
 # 7. Startup
 #    We clone the dataset. git-lfs ensures we get the big files.
+#    CHANGE: Pulling 'qwen2.5:3b' instead of '7b' for a faster fallback.
 CMD git clone https://huggingface.co/datasets/teofizzy/mshauri-data data_download && \
     mv data_download/mshauri_fedha_v6.db . && \
     mv data_download/mshauri_fedha_chroma_db . && \
     rm -rf data_download && \
-    echo "⬇️ Starting Ollama..." && \
+    echo "Starting Ollama..." && \
     ollama serve & \
     sleep 10 && \
-    echo "⬇️ Pulling Models..." && \
-    ollama pull qwen2.5:7b && \
+    echo "Pulling Fallback Model (3B)..." && \
+    ollama pull qwen2.5:3b && \
     ollama pull nomic-embed-text && \
-    echo "✅ Models Ready. Launching App..." && \
+    echo "Models Ready. Launching App..." && \
     streamlit run src/app.py --server.port 7860 --server.address 0.0.0.0

@@ -28,7 +28,6 @@ if "messages" not in st.session_state:
 
 if "agent" not in st.session_state:
     with st.spinner("Initializing Mshauri Brain (Loading Models & Data)..."):
-        # --- THE FIX IS HERE ---
         # SQLAlchemy requires a URI starting with sqlite:///
         # We use 4 slashes (sqlite:////) because it is an absolute path on Linux
         sql_path = f"sqlite:///{os.path.join(current_dir, 'mshauri_fedha_v6.db')}"
@@ -37,15 +36,14 @@ if "agent" not in st.session_state:
         # Check if data exists (Debugging for Space deployment)
         real_db_path = os.path.join(current_dir, "mshauri_fedha_v6.db")
         if not os.path.exists(real_db_path):
-            st.error(f"❌ Database not found at {real_db_path}. Did the clone fail?")
+            st.error(f"Database not found at {real_db_path}. Did the clone fail?")
             st.stop()
             
         try:
-            # Force the 7b model here to ensure CPU compatibility
+            # mshauri_demo.py to intelligently pick the API or Local model.
             st.session_state.agent = create_mshauri_agent(
                 sql_db_path=sql_path, 
-                vector_db_path=vector_path,
-                llm_model="qwen2.5:7b"
+                vector_db_path=vector_path
             )
             st.success("System Ready!")
         except Exception as e:

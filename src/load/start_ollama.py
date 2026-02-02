@@ -2,6 +2,8 @@ import os
 import subprocess
 import time
 import requests
+import json
+import sys
 from pathlib import Path
 
 def start_ollama_server():
@@ -49,9 +51,7 @@ def start_ollama_server():
         print(f" Failed to start server: {e}")
         return False
 
-import requests
-import json
-import sys
+
 
 def pull_embedding_model(model_name="nomic-embed-text"):
     url = "http://127.0.0.1:25000/api/pull"
