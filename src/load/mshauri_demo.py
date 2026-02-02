@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import io
+import time
 from contextlib import redirect_stdout
 from langchain_huggingface import HuggingFaceEndpoint 
 from langchain_ollama import ChatOllama
@@ -16,6 +17,23 @@ DEFAULT_VECTOR_DB = "mshauri_fedha_chroma_db"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
 DEFAULT_LLM_MODEL = "qwen2.5:7b" # qwen 3:32b
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
+
+CANDIDATE_MODELS = [
+    # 1. DeepSeek R1 
+    "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
+    
+    # 2. Google Gemma 2 9B 
+    "google/gemma-2-9b-it",
+    
+    # 3. Meta Llama 3.1 8B 
+    "meta-llama/Meta-Llama-3.1-8B-Instruct",
+    
+    # 4. Mistral NeMo 12B
+    "mistralai/Mistral-Nemo-Instruct-2407",
+    
+    # 5. Microsoft Phi 3.5 Mini
+    "microsoft/Phi-3.5-mini-instruct"
+]
 
 # --- 1. REPLACEMENT CLASS FOR 'Tool' ---
 class SimpleTool:
@@ -169,30 +187,64 @@ def create_mshauri_agent(
     
     # 1. Initialize LLM
     hf_token = os.getenv("HF_TOKEN")
+    llm = None
 
+    # 1. ROBUST SERVERLESS LOADING LOOP
     if hf_token:
-        print("Using Hugging Face Serverless API")
-        # We can use the massive 72B model because we aren't hosting it!
-        llm = HuggingFaceEndpoint(
-            repo_id="Qwen/Qwen2.5-32B-Instruct", 
-            task="text-generation",
-            max_new_tokens=512,
-            repetition_penalty=1.1,
-            temperature=0.2,
-            huggingfacehub_api_token=hf_token
-        )
-    else:
-        print("Using Local CPU Ollama (Slow)")
-        llm = ChatOllama(model="qwen2.5:7b", base_url=ollama_url, temperature=0.1)
-    # 2. LEFT BRAIN (SQL)
+        print("⚡ HF Token found. Testing models for availability...")
+        
+        for model_id in CANDIDATE_MODELS:
+            print(f" Trying model: {model_id}...")
+            try:
+                candidate_llm = HuggingFaceEndpoint(
+                    repo_id=model_id, 
+                    task="text-generation",
+                    max_new_tokens=512,
+                    temperature=0.1,
+                    huggingfacehub_api_token=hf_token,
+                    timeout=10 # Short timeout for testing connection
+                )
+                # CRITICAL: We MUST run a test inference to see if the provider accepts it
+                candidate_llm.invoke("Ping")
+                
+                print(f" SUCCESS: Connected to {model_id}")
+                llm = candidate_llm
+                break # Stop loop, we found a winner
+
+            except Exception as e:
+                error_msg = str(e)
+                if "not supported for task" in error_msg:
+                    print(f" Task Mismatch (Provider rejected text-generation). Skipping.")
+                elif "rate limit" in error_msg.lower():
+                    print(f" Rate Limited. Skipping.")
+                else:
+                    print(f"Connection Failed: {error_msg[:100]}...")
+                
+                # Tiny sleep to be polite to the API
+                time.sleep(1)
+
+    # 2. FALLBACK TO OLLAMA
+    if not llm:
+        print("\nAll Cloud Models failed. Falling back to Local CPU Ollama...")
+        try:
+            llm = ChatOllama(model="qwen2.5:3b", base_url=ollama_url, temperature=0.1)
+        except Exception as e:
+            print(f"Error connecting to Ollama: {e}")
+            return None
+
+    # 3. SETUP TOOLS (SQL + Vector)
     if "sqlite" in sql_db_path:
         real_path = sql_db_path.replace("sqlite:///", "")
         if not os.path.exists(real_path):
              print(f"Warning: SQL Database not found at {real_path}")
 
-    db = SQLDatabase.from_uri(sql_db_path)
-    sql_toolkit = SQLDatabaseToolkit(db=db, llm=llm)
-    sql_tools = sql_toolkit.get_tools()
+    try:
+        db = SQLDatabase.from_uri(sql_db_path)
+        sql_toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+        sql_tools = sql_toolkit.get_tools()
+    except Exception as e:
+        print(f"SQL Tool Setup Failed: {e}. Continuing without SQL.")
+        sql_tools = []
 
     # 3. RIGHT BRAIN (Vector)
     def search_docs(query):
