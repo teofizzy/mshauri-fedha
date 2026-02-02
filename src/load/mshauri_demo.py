@@ -174,7 +174,7 @@ def create_mshauri_agent(
         print("Using Hugging Face Serverless API")
         # We can use the massive 72B model because we aren't hosting it!
         llm = HuggingFaceEndpoint(
-            repo_id="Qwen/Qwen2.5-72B-Instruct", 
+            repo_id="Qwen/Qwen2.5-32B-Instruct", 
             task="text-generation",
             max_new_tokens=512,
             repetition_penalty=1.1,
