@@ -30,9 +30,15 @@ CANDIDATE_MODELS = [
     
     # 4. Mistral NeMo 12B
     "mistralai/Mistral-Nemo-Instruct-2407",
-    
-    # 5. Microsoft Phi 3.5 Mini
-    "microsoft/Phi-3.5-mini-instruct"
+
+    # 5 Qwen 72 B
+    "Qwen/Qwen2.5-72B-Instruct",
+
+    # qwen 2.5 14B
+    "Qwen/Qwen2.5-14B-Instruct",
+
+    # qwen 2.5 7b
+    "Qwen/Qwen2.5-7B-Instruct",
 ]
 
 # --- 1. REPLACEMENT CLASS FOR 'Tool' ---
