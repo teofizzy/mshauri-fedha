@@ -8,7 +8,7 @@ from typing import Any, List, Optional, Mapping
 
 # Replaces HuggingFaceEndpoint with the robust Client
 from huggingface_hub import InferenceClient 
-from langchain.llms.base import LLM
+from langchain_core.language_models.llms import LLM
 
 from langchain_ollama import ChatOllama
 from langchain_community.utilities import SQLDatabase
