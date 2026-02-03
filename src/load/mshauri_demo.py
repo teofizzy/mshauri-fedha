@@ -1,4 +1,5 @@
 import os
+import math
 import re
 import sys
 import io
@@ -67,6 +68,7 @@ class HuggingFaceChat(LLM):
 
 # --- ROBUST MODEL LIST ---
 CANDIDATE_MODELS = [
+    "Qwen/Qwen2.5-72B-Instruct",                # Most Powerful
     "Qwen/Qwen2.5-32B-Instruct",                # Powerful & Balanced
     "Qwen/Qwen2.5-14B-Instruct",                # Faster Alternative
     "Qwen/Qwen2.5-7B-Instruct",                 # Lightweight
@@ -118,8 +120,18 @@ class SimpleReActAgent:
         self.prompt_template = """You are Mshauri Fedha, a senior financial advisor for Kenya. 
         Your goal is to provide accurate, data-backed advice.
 
+        SCOPE (STRICT):
+        1. You answer ONLY questions related to:
+        - Economy (Inflation, GDP, Trade, Fiscal Policy, transport, health, taxes, and other economic matters).
+        - Finance (Exchange Rates, Interest Rates, Banking, Investment).
+        - Business Environment (Regulations, Taxes).
+        2. If the user asks about politics, sports, entertainment, or personal advice, REFUSE nicely: "My scope is limited to economic and financial matters."
+
         RULES:
-        1. CITATIONS: You MUST cite your sources (,).
+        1. CITATIONS & CONFIDENCE: You MUST cite your sources (,).
+            - When using 'search_financial_reports_and_news', the result will have a [Confidence: X%] tag.
+            - You MUST include this confidence score in your final answer.
+            - Example: "According to CBK reports (Confidence: 85%), inflation is rising..."
             - SQL Data ->
             - Text Data -> 
             - Code -> PythonREPLTool
@@ -274,14 +286,39 @@ def create_mshauri_agent(
         sql_toolkit = SQLDatabaseToolkit(db=db, llm=llm)
         sql_tools = sql_toolkit.get_tools()
     except Exception as e:
-        print(f"⚠️ SQL Setup Failed: {e}")
+        print(f"SQL Setup Failed: {e}")
         sql_tools = []
 
     def search_docs(query):
         embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=ollama_url)
         vectorstore = Chroma(persist_directory=vector_db_path, embedding_function=embeddings)
-        results = vectorstore.similarity_search_with_score(query, k=4)
-        return "\n\n".join([f"[Score: {score:.2f}] {d.page_content}" for d, score in results])
+        
+        # Get L2 Distance (Lower is better)
+        results = vectorstore.similarity_search_with_score(query, k=5)
+        
+        formatted_results = []
+        
+        # SIGMA: This controls how strict you are.
+        sigma = 350   # pivot point for scaling
+        
+        for doc, score in results:
+            # Gaussian RBF Kernel
+            # Formula: exp( - (score^2) / (2 * sigma^2) )
+            confidence_float = math.exp(- (score**2) / (2 * sigma**2))
+            
+            # Convert to Percentage
+            confidence_pct = int(confidence_float * 100)
+            
+            # Optional: Filter out low confidence noise (< 20%)
+            if confidence_pct < 20:
+                continue
+                
+            formatted_results.append(f"[Confidence: {confidence_pct}%] {doc.page_content}")
+
+        if not formatted_results:
+             return "No relevant financial documents found."
+
+        return "\n\n".join(formatted_results)
 
     retriever_tool = SimpleTool(
         name="search_financial_reports_and_news",
