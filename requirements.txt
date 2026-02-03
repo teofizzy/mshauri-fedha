@@ -1,6 +1,7 @@
 streamlit
 pandas
 numpy
+langchain
 langchain-ollama
 langchain-community
 langchain-huggingface
