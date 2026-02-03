@@ -23,7 +23,7 @@ DEFAULT_EMBED_MODEL = "nomic-embed-text"
 DEFAULT_LLM_MODEL = "qwen2.5:3b" 
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
-# --- 1. NEW CUSTOM WRAPPER (The Fix) ---
+# --- CUSTOM WRAPPER 
 class HuggingFaceChat(LLM):
     """
     Custom LangChain wrapper that hits the Chat API (v1/chat/completions).
@@ -32,28 +32,34 @@ class HuggingFaceChat(LLM):
     repo_id: str
     hf_token: str
     temperature: float = 0.1
-    max_new_tokens: int = 512
+    max_new_tokens: int = 4096
 
     @property
     def _llm_type(self) -> str:
         return "hf_chat_api"
 
     def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
-        client = InferenceClient(model=self.repo_id, token=self.hf_token)
-        # Convert raw prompt to chat format
-        messages = [{"role": "user", "content": prompt}]
-        
-        try:
-            # Hit the Chat API directly
-            response = client.chat_completion(
-                messages=messages, 
-                max_tokens=self.max_new_tokens, 
-                temperature=self.temperature,
-                stream=False
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            raise ValueError(f"API Error: {e}")
+            client = InferenceClient(model=self.repo_id, token=self.hf_token)
+            messages = [{"role": "user", "content": prompt}]
+            
+            try:
+                response = client.chat_completion(
+                    messages=messages, 
+                    max_tokens=self.max_new_tokens, 
+                    temperature=self.temperature,
+                    stream=False
+                )
+                content = response.choices[0].message.content
+                
+                # DeepSeek-R1 outputs thoughts in <think> tags. We must strip them 
+                # so the Agent logic doesn't get confused.
+                if "<think>" in content:
+                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                
+                return content
+                
+            except Exception as e:
+                raise ValueError(f"API Error: {e}")
 
     @property
     def _identifying_params(self) -> Mapping[str, Any]:
@@ -61,10 +67,10 @@ class HuggingFaceChat(LLM):
 
 # --- ROBUST MODEL LIST ---
 CANDIDATE_MODELS = [
-    "deepseek-ai/DeepSeek-R1-Distill-Llama-8B", # Smartest Logic
     "Qwen/Qwen2.5-32B-Instruct",                # Powerful & Balanced
     "Qwen/Qwen2.5-14B-Instruct",                # Faster Alternative
     "Qwen/Qwen2.5-7B-Instruct",                 # Lightweight
+    "deepseek-ai/DeepSeek-R1-Distill-Llama-8B", # Smartest Logic
     "meta-llama/Meta-Llama-3.1-8B-Instruct",    # High Availability
     "mistralai/Mistral-Nemo-Instruct-2407",     # Large Context
     "HuggingFaceH4/zephyr-7b-beta",             # Old Reliable
@@ -171,10 +177,16 @@ class SimpleReActAgent:
 
             scratchpad += response_text
 
+            # Check for explicit Final Answer
             if "Final Answer:" in response_text:
                 return {"output": response_text.split("Final Answer:")[-1].strip()}
 
+            # Check for Action (Tool Use)
             action_match = re.search(r"Action:\s*(.*?)\n", response_text)
+            
+            #  FALLBACK: If there is NO Action and NO Final Answer, assume the whole text is the answer.
+            if not action_match and "Action:" not in response_text:
+                return {"output": response_text.strip()}
             input_match = re.search(r"Action Input:\s*(.*)", response_text)
             
             if action_match:
@@ -194,7 +206,7 @@ class SimpleReActAgent:
                         tool_result = f"Error: {e}"
                     
                     if self.verbose:
-                        print(f"👀 Observation: {str(tool_result)[:200]}...")
+                        print(f"Observation: {str(tool_result)[:200]}...")
                     observation = f"\nObservation: {tool_result}\n"
                 else:
                     observation = f"\nObservation: Error: Tool '{action_name}' not found.\n"
@@ -207,7 +219,7 @@ class SimpleReActAgent:
                     
         return {"output": "Agent timed out."}
 
-# --- 3. MAIN SETUP FUNCTION ---
+# --- MAIN SETUP FUNCTION ---
 
 def create_mshauri_agent(
     sql_db_path=DEFAULT_SQL_DB,
@@ -242,7 +254,7 @@ def create_mshauri_agent(
                 print(f"Failed: {str(e)[:100]}...")
                 time.sleep(1)
 
-    # 2. FALLBACK
+    # FALLBACK
     if not llm:
         print("\nFalling back to Local CPU Ollama...")
         try:
@@ -251,7 +263,7 @@ def create_mshauri_agent(
             print(f"Error connecting to Ollama: {e}")
             return None
 
-    # 3. TOOLS
+    # TOOLS
     if "sqlite" in sql_db_path:
         real_path = sql_db_path.replace("sqlite:///", "")
         if not os.path.exists(real_path):
@@ -281,7 +293,7 @@ def create_mshauri_agent(
     tools = sql_tools + [retriever_tool, repl_tool]
     agent = SimpleReActAgent(llm, tools)
     
-    print("✅ Agent Ready.")
+    print("Agent Ready.")
     return agent
 
 def ask_mshauri(agent, query):
