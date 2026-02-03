@@ -130,6 +130,7 @@ class SimpleReActAgent:
         RULES:
         1. CITATIONS & CONFIDENCE: You MUST cite your sources (,).
             - When using 'search_financial_reports_and_news', the result will have a [Confidence: X%] tag.
+            - You MUST include citations or sources in your final answer. If there is no citations, state "Not available in database. Based on my knowledge as of 2023-11".
             - You MUST include this confidence score in your final answer.
             - Example: "According to CBK reports (Confidence: 85%), inflation is rising..."
             - SQL Data ->
