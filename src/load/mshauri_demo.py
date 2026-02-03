@@ -139,8 +139,12 @@ class SimpleReActAgent:
             - First, check SQL tables ('sql_db_list_tables').
             - IF the tables listed do NOT match the user's question, IMMEDIATELY switch to 'search_financial_reports_and_news'. 
             - Do NOT keep asking for tables if they are clearly not there.
-        3. ADVICE: After presenting facts, add an "Advisory Opinion" section.
-        4. CONFIDENCE: If data is old, state "Low Confidence".
+        3. ADVICE PROTOCOL (CRITICAL) ***
+            - IF the user asks for facts (e.g., "What is the rate?", "Show me the trend, what was the cause? How has it changed?"):
+            -> Provide ONLY the data/facts. Do NOT give advice or recommendations. Be purely objective.
+            
+            - IF the user asks for help/guidance (e.g., "Is this good?", "What should I do?", "How does this affect me?, What can be done? How can we improve?"):
+            -> First present the facts, THEN add a distinct section titled "Advisory Opinion" with your professional recommendation based on the facts.
 
         Tools Available:
         {tool_desc}
