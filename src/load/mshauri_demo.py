@@ -4,7 +4,12 @@ import sys
 import io
 import time
 from contextlib import redirect_stdout
-from langchain_huggingface import HuggingFaceEndpoint 
+from typing import Any, List, Optional, Mapping
+
+# Replaces HuggingFaceEndpoint with the robust Client
+from huggingface_hub import InferenceClient 
+from langchain.llms.base import LLM
+
 from langchain_ollama import ChatOllama
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
@@ -15,32 +20,54 @@ from langchain_community.embeddings import OllamaEmbeddings
 DEFAULT_SQL_DB = "sqlite:///mshauri_fedha_v6.db"
 DEFAULT_VECTOR_DB = "mshauri_fedha_chroma_db"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
-DEFAULT_LLM_MODEL = "qwen2.5:7b" # qwen 3:32b
+DEFAULT_LLM_MODEL = "qwen2.5:3b" 
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
+# --- 1. NEW CUSTOM WRAPPER (The Fix) ---
+class HuggingFaceChat(LLM):
+    """
+    Custom LangChain wrapper that hits the Chat API (v1/chat/completions).
+    This fixes the 'Task Mismatch' error for Qwen, DeepSeek, and Llama.
+    """
+    repo_id: str
+    hf_token: str
+    temperature: float = 0.1
+    max_new_tokens: int = 512
+
+    @property
+    def _llm_type(self) -> str:
+        return "hf_chat_api"
+
+    def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
+        client = InferenceClient(model=self.repo_id, token=self.hf_token)
+        # Convert raw prompt to chat format
+        messages = [{"role": "user", "content": prompt}]
+        
+        try:
+            # Hit the Chat API directly
+            response = client.chat_completion(
+                messages=messages, 
+                max_tokens=self.max_new_tokens, 
+                temperature=self.temperature,
+                stream=False
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            raise ValueError(f"API Error: {e}")
+
+    @property
+    def _identifying_params(self) -> Mapping[str, Any]:
+        return {"repo_id": self.repo_id}
+
+# --- ROBUST MODEL LIST ---
 CANDIDATE_MODELS = [
-    # 1. DeepSeek R1 
-    "deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
-    
-    # 2. Google Gemma 2 9B 
-    "google/gemma-2-9b-it",
-    
-    # 3. Meta Llama 3.1 8B 
-    "meta-llama/Meta-Llama-3.1-8B-Instruct",
-
-    "HuggingFaceH4/zephyr-7b-beta",
-
-    # 2. Mistral 7B Instruct v0.3 (
-    "mistralai/Mistral-7B-Instruct-v0.3",
-    
-    # 4. Mistral NeMo
-    "mistralai/Mistral-Nemo-Instruct-2407",
-    "mistralai/Mistral-7B-Instruct-v0.2",
-
-    # qwen 2.5
-    "Qwen/Qwen2.5-14B-Instruct",
-    "Qwen/Qwen2.5-7B-Instruct",
-    
+    "deepseek-ai/DeepSeek-R1-Distill-Llama-8B", # Smartest Logic
+    "Qwen/Qwen2.5-32B-Instruct",                # Powerful & Balanced
+    "Qwen/Qwen2.5-14B-Instruct",                # Faster Alternative
+    "Qwen/Qwen2.5-7B-Instruct",                 # Lightweight
+    "meta-llama/Meta-Llama-3.1-8B-Instruct",    # High Availability
+    "mistralai/Mistral-Nemo-Instruct-2407",     # Large Context
+    "HuggingFaceH4/zephyr-7b-beta",             # Old Reliable
 ]
 
 # --- 1. REPLACEMENT CLASS FOR 'Tool' ---
@@ -120,11 +147,9 @@ class SimpleReActAgent:
     def invoke(self, inputs):
         query = inputs["input"]
         scratchpad = ""
-        
         print(f"🚀 Starting Agent Loop for: '{query}'")
         
-        for step in range(10): # Max 10 steps
-            # Fill the prompt
+        for step in range(10):
             prompt = self.prompt_template.format(
                 tool_desc=self.tool_desc,
                 tool_names=self.tool_names,
@@ -132,31 +157,33 @@ class SimpleReActAgent:
                 agent_scratchpad=scratchpad
             )
             
-            # Call LLM
-            response = self.llm.invoke(prompt, stop=["\nObservation:"])
-            response_text = response.content
+            # CRITICAL: Handle API Errors inside the loop to avoid crash
+            try:
+                response = self.llm.invoke(prompt, stop=["\nObservation:"])
+                # Handle different return types (String vs Object)
+                response_text = response if isinstance(response, str) else response.content
+            except Exception as e:
+                print(f"LLM Error: {e}")
+                return {"output": "Error contacting AI service. Please try again."}
             
             if self.verbose:
-                print(f"\n🧠 Step {step+1}: {response_text.strip()}")
+                print(f"\nStep {step+1}: {response_text.strip()}")
 
             scratchpad += response_text
 
             if "Final Answer:" in response_text:
                 return {"output": response_text.split("Final Answer:")[-1].strip()}
 
-            # Parse Action
             action_match = re.search(r"Action:\s*(.*?)\n", response_text)
             input_match = re.search(r"Action Input:\s*(.*)", response_text)
             
             if action_match:
                 action_name = action_match.group(1).strip()
-                # Handle empty input gracefully (regex .* matches empty string)
                 action_input = input_match.group(1).strip() if input_match else ""
                 
                 if action_name in self.tools:
                     if self.verbose:
-                        print(f"Calling '{action_name}' with: '{action_input}'")
-                    
+                        print(f"🛠️ Calling '{action_name}' with: '{action_input}'")
                     try:
                         tool = self.tools[action_name]
                         if hasattr(tool, 'invoke'):
@@ -164,22 +191,18 @@ class SimpleReActAgent:
                         else:
                             tool_result = tool.run(action_input)
                     except Exception as e:
-                        tool_result = f"Error executing tool: {e}"
+                        tool_result = f"Error: {e}"
                     
-                    # --- ADDED LOGGING HERE ---
                     if self.verbose:
-                        # Print first 200 chars so we can see if it worked
-                        print(f"Observation: {str(tool_result)[:200]}...")
-                        
+                        print(f"👀 Observation: {str(tool_result)[:200]}...")
                     observation = f"\nObservation: {tool_result}\n"
                 else:
-                    observation = f"\nObservation: Error: Tool '{action_name}' not found. Available: {self.tool_names}\n"
-                
+                    observation = f"\nObservation: Error: Tool '{action_name}' not found.\n"
                 scratchpad += observation
             else:
-                if "Action:" in response_text:
-                    scratchpad += "\nObservation: You provided an Action but formatting was unclear. Please use 'Action:' and 'Action Input:' clearly.\n"
-                else:
+                 if "Action:" in response_text:
+                    scratchpad += "\nObservation: Missing Action Input.\n"
+                 else:
                     return {"output": response_text.strip()}
                     
         return {"output": "Agent timed out."}
@@ -191,56 +214,44 @@ def create_mshauri_agent(
     vector_db_path=DEFAULT_VECTOR_DB,
     llm_model=DEFAULT_LLM_MODEL,
     ollama_url=DEFAULT_OLLAMA_URL):
-    print(f"⚙️  Initializing Mshauri Fedha (Model: {llm_model})...")
+    print(f"Initializing Mshauri Fedha...")
     
-    # 1. Initialize LLM
     hf_token = os.getenv("HF_TOKEN")
     llm = None
 
     # 1. ROBUST SERVERLESS LOADING LOOP
     if hf_token:
-        print("⚡ HF Token found. Testing models for availability...")
+        print("⚡ HF Token found. Testing models...")
         
         for model_id in CANDIDATE_MODELS:
-            print(f" Trying model: {model_id}...")
+            print(f"Trying model: {model_id}...")
             try:
-                candidate_llm = HuggingFaceEndpoint(
+                # USE CUSTOM WRAPPER
+                candidate_llm = HuggingFaceChat(
                     repo_id=model_id, 
-                    task="text-generation",
-                    max_new_tokens=512,
-                    temperature=0.1,
-                    huggingfacehub_api_token=hf_token,
-                    timeout=10 # Short timeout for testing connection
+                    hf_token=hf_token,
+                    temperature=0.1
                 )
-                # CRITICAL: We MUST run a test inference to see if the provider accepts it
+                # TEST CALL
                 candidate_llm.invoke("Ping")
                 
-                print(f" SUCCESS: Connected to {model_id}")
+                print(f"SUCCESS: Connected to {model_id}")
                 llm = candidate_llm
-                break # Stop loop, we found a winner
-
+                break
             except Exception as e:
-                error_msg = str(e)
-                if "not supported for task" in error_msg:
-                    print(f" Task Mismatch (Provider rejected text-generation). Skipping.")
-                elif "rate limit" in error_msg.lower():
-                    print(f" Rate Limited. Skipping.")
-                else:
-                    print(f"Connection Failed: {error_msg[:100]}...")
-                
-                # Tiny sleep to be polite to the API
+                print(f"Failed: {str(e)[:100]}...")
                 time.sleep(1)
 
-    # 2. FALLBACK TO OLLAMA
+    # 2. FALLBACK
     if not llm:
-        print("\nAll Cloud Models failed. Falling back to Local CPU Ollama...")
+        print("\nFalling back to Local CPU Ollama...")
         try:
             llm = ChatOllama(model="qwen2.5:3b", base_url=ollama_url, temperature=0.1)
         except Exception as e:
             print(f"Error connecting to Ollama: {e}")
             return None
 
-    # 3. SETUP TOOLS (SQL + Vector)
+    # 3. TOOLS
     if "sqlite" in sql_db_path:
         real_path = sql_db_path.replace("sqlite:///", "")
         if not os.path.exists(real_path):
@@ -251,31 +262,26 @@ def create_mshauri_agent(
         sql_toolkit = SQLDatabaseToolkit(db=db, llm=llm)
         sql_tools = sql_toolkit.get_tools()
     except Exception as e:
-        print(f"SQL Tool Setup Failed: {e}. Continuing without SQL.")
+        print(f"⚠️ SQL Setup Failed: {e}")
         sql_tools = []
 
-    # 3. RIGHT BRAIN (Vector)
     def search_docs(query):
         embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=ollama_url)
         vectorstore = Chroma(persist_directory=vector_db_path, embedding_function=embeddings)
-        # --- FIXED: Use similarity_search_with_score ---
         results = vectorstore.similarity_search_with_score(query, k=4)
         return "\n\n".join([f"[Score: {score:.2f}] {d.page_content}" for d, score in results])
 
     retriever_tool = SimpleTool(
         name="search_financial_reports_and_news",
         func=search_docs,
-        description="Searches CBK/KNBS reports and business news. Use this for qualitative questions (why, how, trends) or when SQL data is missing."
+        description="Searches CBK reports/news."
     )
     
-    # 4. PYTHON TOOL
     repl_tool = PythonREPLTool()
-
-    # 5. CREATE AGENT
     tools = sql_tools + [retriever_tool, repl_tool]
     agent = SimpleReActAgent(llm, tools)
     
-    print(" Mshauri Agent Ready (Zero-Dependency Mode).")
+    print("✅ Agent Ready.")
     return agent
 
 def ask_mshauri(agent, query):
