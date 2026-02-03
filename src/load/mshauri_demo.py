@@ -27,18 +27,20 @@ CANDIDATE_MODELS = [
     
     # 3. Meta Llama 3.1 8B 
     "meta-llama/Meta-Llama-3.1-8B-Instruct",
+
+    "HuggingFaceH4/zephyr-7b-beta",
+
+    # 2. Mistral 7B Instruct v0.3 (
+    "mistralai/Mistral-7B-Instruct-v0.3",
     
-    # 4. Mistral NeMo 12B
+    # 4. Mistral NeMo
     "mistralai/Mistral-Nemo-Instruct-2407",
+    "mistralai/Mistral-7B-Instruct-v0.2",
 
-    # 5 Qwen 72 B
-    "Qwen/Qwen2.5-72B-Instruct",
-
-    # qwen 2.5 14B
+    # qwen 2.5
     "Qwen/Qwen2.5-14B-Instruct",
-
-    # qwen 2.5 7b
     "Qwen/Qwen2.5-7B-Instruct",
+    
 ]
 
 # --- 1. REPLACEMENT CLASS FOR 'Tool' ---
