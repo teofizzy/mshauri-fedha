@@ -10,3 +10,4 @@ langchain-chroma
 chromadb
 huggingface_hub
 pysqlite3-binary
+deep-translator

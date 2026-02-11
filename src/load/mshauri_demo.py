@@ -7,6 +7,9 @@ import time
 from contextlib import redirect_stdout
 from typing import Any, List, Optional, Mapping
 
+# --- NEW IMPORT FOR TRANSLATION ---
+from deep_translator import GoogleTranslator
+
 # Replaces HuggingFaceEndpoint with the robust Client
 from huggingface_hub import InferenceClient 
 from langchain_core.language_models.llms import LLM
@@ -24,7 +27,7 @@ DEFAULT_EMBED_MODEL = "nomic-embed-text"
 DEFAULT_LLM_MODEL = "qwen2.5:3b" 
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
-# --- CUSTOM WRAPPER 
+# --- CUSTOM WRAPPER ---
 class HuggingFaceChat(LLM):
     """
     Custom LangChain wrapper that hits the Chat API (v1/chat/completions).
@@ -175,7 +178,8 @@ class SimpleReActAgent:
     def invoke(self, inputs):
         query = inputs["input"]
         scratchpad = ""
-        print(f"🚀 Starting Agent Loop for: '{query}'")
+        # Flush=True forces logs to appear instantly
+        print(f"🚀 Starting Agent Loop for: '{query}'", flush=True)
         
         for step in range(10):
             prompt = self.prompt_template.format(
@@ -195,7 +199,7 @@ class SimpleReActAgent:
                 return {"output": "Error contacting AI service. Please try again."}
             
             if self.verbose:
-                print(f"\nStep {step+1}: {response_text.strip()}")
+                print(f"\nStep {step+1}: {response_text.strip()}", flush=True)
 
             scratchpad += response_text
 
@@ -217,7 +221,7 @@ class SimpleReActAgent:
                 
                 if action_name in self.tools:
                     if self.verbose:
-                        print(f"🛠️ Calling '{action_name}' with: '{action_input}'")
+                        print(f"🛠️ Calling '{action_name}' with: '{action_input}'", flush=True)
                     try:
                         tool = self.tools[action_name]
                         if hasattr(tool, 'invoke'):
@@ -228,7 +232,7 @@ class SimpleReActAgent:
                         tool_result = f"Error: {e}"
                     
                     if self.verbose:
-                        print(f"Observation: {str(tool_result)[:200]}...")
+                        print(f"Observation: {str(tool_result)[:200]}...", flush=True)
                     observation = f"\nObservation: {tool_result}\n"
                 else:
                     observation = f"\nObservation: Error: Tool '{action_name}' not found.\n"
@@ -240,6 +244,75 @@ class SimpleReActAgent:
                     return {"output": response_text.strip()}
                     
         return {"output": "Agent timed out."}
+
+# --- 3. NEW MULTILINGUAL AGENT WRAPPER ---
+class MultilingualAgent:
+    """
+    Wraps the core agent to handle English/Swahili translation transparently.
+    1. Detects Swahili input.
+    2. Translates SW -> EN.
+    3. Runs Agent in English (better reasoning/tools).
+    4. Translates EN Output -> SW.
+    """
+    def __init__(self, agent):
+        self.agent = agent
+        # Initialize translators
+        self.en_to_sw = GoogleTranslator(source='en', target='sw')
+        self.sw_to_en = GoogleTranslator(source='sw', target='en')
+
+    def detect_and_translate_input(self, query):
+        """
+        Heuristic check: If query contains common Swahili words, treat as Swahili.
+        """
+        # Keywords common in Kenyan financial/economic context
+        swahili_keywords = [
+            'habari', 'pesa', 'shilingi', 'bei', 'uchumi', 'mkopo', 'faida', 
+            'hasara', 'benki', 'riba', 'soko', 'mfumuko', 'kodi', 'ushuru',
+            'serikali', 'biashara', 'uwekezaji', 'bajeti', 'deni', 'kipato'
+        ]
+        
+        # Check if any keyword exists
+        is_swahili = any(word in query.lower() for word in swahili_keywords)
+        
+        # Also check if user explicitly requested Swahili
+        if "swahili" in query.lower() or "kiswahili" in query.lower():
+            is_swahili = True
+
+        if is_swahili:
+            print(f"🌍 Swahili context detected. Translating input...", flush=True)
+            try:
+                translated_query = self.sw_to_en.translate(query)
+                print(f"   Original: '{query}' -> English: '{translated_query}'", flush=True)
+                return translated_query, True
+            except Exception as e:
+                print(f"   ⚠️ Translation failed: {e}. Using original.", flush=True)
+                return query, False
+        
+        return query, False
+
+    def invoke(self, inputs):
+        query = inputs["input"]
+        
+        # 1. PRE-PROCESS: Translate Input
+        processed_query, is_swahili_mode = self.detect_and_translate_input(query)
+        
+        # 2. CORE PROCESS: Run Agent in English
+        # We pass the ENGLISH query to the agent so it can use SQL/Vector tools correctly.
+        result = self.agent.invoke({"input": processed_query})
+        english_output = result.get("output", "Error")
+        
+        # 3. POST-PROCESS: Translate Output if needed
+        if is_swahili_mode:
+            print(f"🌍 Translating response to Swahili...", flush=True)
+            try:
+                # Translating the final answer
+                swahili_output = self.en_to_sw.translate(english_output)
+                return {"output": swahili_output}
+            except Exception as e:
+                print(f"   ⚠️ Response translation failed: {e}", flush=True)
+                return {"output": f"{english_output} (Translation Error)"}
+        
+        return {"output": english_output}
 
 # --- MAIN SETUP FUNCTION ---
 
@@ -255,10 +328,10 @@ def create_mshauri_agent(
 
     # 1. ROBUST SERVERLESS LOADING LOOP
     if hf_token:
-        print("⚡ HF Token found. Testing models...")
+        print("⚡ HF Token found. Testing models...", flush=True)
         
         for model_id in CANDIDATE_MODELS:
-            print(f"Trying model: {model_id}...")
+            print(f"Trying model: {model_id}...", flush=True)
             try:
                 # USE CUSTOM WRAPPER
                 candidate_llm = HuggingFaceChat(
@@ -269,16 +342,16 @@ def create_mshauri_agent(
                 # TEST CALL
                 candidate_llm.invoke("Ping")
                 
-                print(f"SUCCESS: Connected to {model_id}")
+                print(f"SUCCESS: Connected to {model_id}", flush=True)
                 llm = candidate_llm
                 break
             except Exception as e:
-                print(f"Failed: {str(e)[:100]}...")
+                print(f"Failed: {str(e)[:100]}...", flush=True)
                 time.sleep(1)
 
     # FALLBACK
     if not llm:
-        print("\nFalling back to Local CPU Ollama...")
+        print("\nFalling back to Local CPU Ollama...", flush=True)
         try:
             llm = ChatOllama(model="qwen2.5:3b", base_url=ollama_url, temperature=0.1)
         except Exception as e:
@@ -340,8 +413,9 @@ def create_mshauri_agent(
     tools = sql_tools + [retriever_tool, repl_tool]
     agent = SimpleReActAgent(llm, tools)
     
-    print("Agent Ready.")
-    return agent
+    # WRAP THE AGENT IN TRANSLATION LAYER
+    print("Agent Ready (Multilingual Mode).", flush=True)
+    return MultilingualAgent(agent)
 
 def ask_mshauri(agent, query):
     if not agent:
@@ -363,4 +437,7 @@ def ask_mshauri(agent, query):
 if __name__ == "__main__":
     # Quick Test
     agent = create_mshauri_agent()
+    # Test English
     ask_mshauri(agent, "What is the inflation rate?")
+    # Test Swahili
+    ask_mshauri(agent, "Hali ya uchumi ni vipi?")
