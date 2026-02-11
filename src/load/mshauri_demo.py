@@ -245,7 +245,7 @@ class SimpleReActAgent:
                     
         return {"output": "Agent timed out."}
 
-# --- 3. NEW MULTILINGUAL AGENT WRAPPER ---
+# --- 3. MULTILINGUAL AGENT WRAPPER ---
 class MultilingualAgent:
     """
     Wraps the core agent to handle English/Swahili translation transparently.
