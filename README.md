@@ -105,7 +105,7 @@ ask_mshauri(agent, "What is the inflation rate in 2023 and why is it rising?")
 ```
 **Sample Output**
 ```plaintext
-❓ User: What is the inflation rate in 2023 and why is it rising?
+User: What is the inflation rate in 2023 and why is it rising?
 ----------------------------------------
 Starting Agent Loop...
 
