@@ -109,7 +109,7 @@ class PythonREPLTool(SimpleTool):
         except Exception as e:
             return f"Error executing code: {e}"
 
-# --- 2. REPLACEMENT CLASS FOR THE AGENT ---
+# --- 2. CLASS FOR THE AGENT ---
 class SimpleReActAgent:
     """A manual ReAct loop that doesn't rely on langchain.agents"""
     def __init__(self, llm, tools, verbose=True):
