@@ -179,7 +179,7 @@ class SimpleReActAgent:
         query = inputs["input"]
         scratchpad = ""
         # Flush=True forces logs to appear instantly
-        print(f"🚀 Starting Agent Loop for: '{query}'", flush=True)
+        print(f"Starting Agent Loop for: '{query}'", flush=True)
         
         for step in range(10):
             prompt = self.prompt_template.format(
@@ -221,7 +221,7 @@ class SimpleReActAgent:
                 
                 if action_name in self.tools:
                     if self.verbose:
-                        print(f"🛠️ Calling '{action_name}' with: '{action_input}'", flush=True)
+                        print(f"Calling '{action_name}' with: '{action_input}'", flush=True)
                     try:
                         tool = self.tools[action_name]
                         if hasattr(tool, 'invoke'):
@@ -279,13 +279,13 @@ class MultilingualAgent:
             is_swahili = True
 
         if is_swahili:
-            print(f"🌍 Swahili context detected. Translating input...", flush=True)
+            print(f"Swahili context detected. Translating input...", flush=True)
             try:
                 translated_query = self.sw_to_en.translate(query)
                 print(f"   Original: '{query}' -> English: '{translated_query}'", flush=True)
                 return translated_query, True
             except Exception as e:
-                print(f"   ⚠️ Translation failed: {e}. Using original.", flush=True)
+                print(f"  Translation failed: {e}. Using original.", flush=True)
                 return query, False
         
         return query, False
@@ -303,13 +303,13 @@ class MultilingualAgent:
         
         # 3. POST-PROCESS: Translate Output if needed
         if is_swahili_mode:
-            print(f"🌍 Translating response to Swahili...", flush=True)
+            print(f"Translating response to Swahili...", flush=True)
             try:
                 # Translating the final answer
                 swahili_output = self.en_to_sw.translate(english_output)
                 return {"output": swahili_output}
             except Exception as e:
-                print(f"   ⚠️ Response translation failed: {e}", flush=True)
+                print(f" Response translation failed: {e}", flush=True)
                 return {"output": f"{english_output} (Translation Error)"}
         
         return {"output": english_output}
