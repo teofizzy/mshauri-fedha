@@ -25,7 +25,7 @@ def _manage_ollama_server(ollama_host, ollama_port, ollama_bin, model):
             return True
     except: pass
 
-    logger.info(f"🚀 Starting Ollama ({model})...")
+    logger.info(f"Starting Ollama ({model})...")
     scratch_env = os.environ.get("SCRATCH", "/tmp")
     models_dir = Path(scratch_env) / "ollama_core/models"
     
@@ -178,10 +178,10 @@ def ingest_knbs_data(input_dir: str, db_name: str, model: str = "qwen2.5:14b"):
     
     # Process Files (RECURSIVE SEARCH using rglob)
     files = sorted(list(INPUT_PATH.rglob("*.md")))
-    logger.info(f"🚀 Found {len(files)} KNBS markdown files (Recursive Scan). Starting ingestion...")
+    logger.info(f"Found {len(files)} KNBS markdown files (Recursive Scan). Starting ingestion...")
     
     for f in files:
-        logger.info(f"📄 Processing {f.name}...")
+        logger.info(f"Processing {f.name}...")
         try:
             with open(f, 'r', encoding='utf-8', errors='ignore') as file:
                 content = file.read()

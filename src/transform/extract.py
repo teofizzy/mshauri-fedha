@@ -29,8 +29,8 @@ def configure_parallelism(workers_per_gpu=5):
     
     total_slots = num_gpus * workers_per_gpu
     
-    print(f"🔍 GH200/A100 Detected: {num_gpus} GPUs | {total_vram_gb:.1f} GB VRAM")
-    print(f"⚙️  Stability Config: {workers_per_gpu} workers/GPU | {total_slots} Total Slots")
+    print(f"GH200/A100 Detected: {num_gpus} GPUs | {total_vram_gb:.1f} GB VRAM")
+    print(f"Stability Config: {workers_per_gpu} workers/GPU | {total_slots} Total Slots")
     
     # --- SYSTEM TUNING ---
     os.environ["OLLAMA_NUM_PARALLEL"] = str(total_slots)
@@ -256,7 +256,7 @@ if __name__ == "__main__":
         workers_per_gpu = max(1, workers_per_gpu) # Minimum 1
         
         total_slots = num_gpus * workers_per_gpu
-        print(f"⚙️  Dynamic Config: {num_gpus} GPUs | {workers_per_gpu} workers/GPU | {total_slots} Total Slots")
+        print(f"Dynamic Config: {num_gpus} GPUs | {workers_per_gpu} workers/GPU | {total_slots} Total Slots")
         
         # Set Env vars for external tools (optional, but good practice)
         os.environ["OLLAMA_NUM_PARALLEL"] = str(total_slots)

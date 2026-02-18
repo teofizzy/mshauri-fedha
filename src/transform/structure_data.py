@@ -308,7 +308,7 @@ def process_cbk_files(input_dir: str, db_name="mshauri_fedha_v6.db", model="qwen
     client = Client(host=OLLAMA_HOST)
     
     files = sorted(list(INPUT_PATH.glob("*.csv")))
-    print(f"🚀 Processing {len(files)} files...")
+    print(f"Processing {len(files)} files...")
     
     for f in files:
         process_file_v6(f, engine, client, model)
@@ -316,7 +316,7 @@ def process_cbk_files(input_dir: str, db_name="mshauri_fedha_v6.db", model="qwen
     print("\n Done.")
     with engine.connect() as conn:
         tables = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()
-        print(f"📊 Created {len(tables)} tables.")
+        print(f"Created {len(tables)} tables.")
 
 if __name__ == "__main__":
     pass

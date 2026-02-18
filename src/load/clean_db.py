@@ -31,7 +31,7 @@ def drop_blacklisted_tables(engine):
             logger.info("No tables found matching blacklist patterns.")
             return
 
-        logger.info(f"🗑️  Dropping {len(tables_to_drop)} tables...")
+        logger.info(f"Dropping {len(tables_to_drop)} tables...")
         for t in tables_to_drop:
             conn.execute(text(f'DROP TABLE "{t}"'))
             logger.info(f"   - Dropped: {t}")
@@ -88,7 +88,7 @@ def clean_table(engine, table_name, drop_top_rows=0, rename_map=None, rename_by_
 
 def run_specific_fixes(engine):
     """Orchestrates the specific cleaning rules."""
-    logger.info("🔧 Running specific table fixes...")
+    logger.info("Running specific table fixes...")
     
     # 1. Historical Rates
     clean_table(engine, "download_all_historical_rates", 
@@ -153,7 +153,7 @@ def drop_tables(engine):
         'issues_of_treasury_bonds'
     ]
 
-    print("🗑️  Dropping Tables...")
+    print("Dropping Tables...")
     with engine.connect() as conn:
         for t in tables_to_drop:
             try:

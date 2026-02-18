@@ -37,7 +37,7 @@ def list_all_tables(engine):
         return []
 
 def inspect_table(engine, table_name):
-    print(f"\n🔎 Inspecting Table: '{table_name}'")
+    print(f"\nInspecting Table: '{table_name}'")
     try:
         # Read schema/columns
         query = f'SELECT * FROM "{table_name}" LIMIT 5'

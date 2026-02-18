@@ -22,7 +22,7 @@ def analyze_schemas(news_dir: str):
         return
 
     csv_files = glob.glob(os.path.join(news_dir, "*.csv"))
-    logger.info(f"🔍 Scanning {len(csv_files)} files in '{news_dir}'...\n")
+    logger.info(f"Scanning {len(csv_files)} files in '{news_dir}'...\n")
     
     if not csv_files:
         logger.warning(" No CSV files found.")

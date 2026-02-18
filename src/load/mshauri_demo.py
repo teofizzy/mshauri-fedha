@@ -338,7 +338,7 @@ def create_mshauri_agent(
 
     # 1. ROBUST SERVERLESS LOADING LOOP
     if hf_token:
-        print("⚡ HF Token found. Testing models...", flush=True)
+        print("HF Token found. Testing models...", flush=True)
         
         for model_id in CANDIDATE_MODELS:
             print(f"Trying model: {model_id}...", flush=True)

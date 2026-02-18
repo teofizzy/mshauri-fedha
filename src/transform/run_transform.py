@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     t_start = time.perf_counter()
-    logger.info(f"🚀 Starting Transformation Pipeline on Node {NODE_ID}")
+    logger.info(f"Starting Transformation Pipeline on Node {NODE_ID}")
 
     # --- 2. ENVIRONMENT & PATHS ---
     SCRATCH = Path(os.environ.get("SCRATCH", "/tmp"))
@@ -60,7 +60,7 @@ def main():
     server_env["OLLAMA_MAX_QUEUE"] = "2048"
     server_env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-    logger.info(f"⏳ Launching Ollama Server with {total_slots} slots...")
+    logger.info(f"Launching Ollama Server with {total_slots} slots...")
     subprocess.Popen(
         [str(OLLAMA_BIN), "serve"], 
         stdout=subprocess.DEVNULL, 
@@ -115,7 +115,7 @@ def main():
         num_gpus=num_gpus                   
     )
 
-    logger.info(f"🚀 Processing PDFs...")
+    logger.info(f"Processing PDFs...")
     # Using the 'subset' parameter in process_folder (ensure extract.py supports this)
     processor.process_folder(INPUT_PDFS_DIR, batch_size=5, subset=my_pdf_strs)
 
@@ -123,7 +123,7 @@ def main():
     t_end = time.perf_counter()
     duration = timedelta(seconds=t_end - t_start)
     logger.info(" Transformation process finished.")
-    logger.info(f"⏱️ Total Duration for Node {NODE_ID}: {duration}")
+    logger.info(f"Total Duration for Node {NODE_ID}: {duration}")
     
     # Shutdown server
     subprocess.run(["pkill", "-f", "ollama serve"], stderr=subprocess.DEVNULL)

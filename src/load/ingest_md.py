@@ -47,7 +47,7 @@ def ingest_markdown_reports(
         logger.error(f" Directory not found: {markdown_dir}")
         return
 
-    print(f"📄 Scanning for Markdown Reports in {markdown_dir}...")
+    print(f"Scanning for Markdown Reports in {markdown_dir}...")
     
     # --- 1. LOAD FILES (Improved) ---
     # We use TextLoader which is faster and doesn't trigger 'unstructured' warnings
@@ -88,7 +88,7 @@ def ingest_markdown_reports(
         if "source" not in d.metadata:
             d.metadata["source"] = os.path.basename(d.metadata.get("source", "Official Report"))
 
-    print(f"   ✂️  Split into {len(docs)} chunks.")
+    print(f"   Split into {len(docs)} chunks.")
 
     # --- 4. EMBEDDING ---
     print(" Appending to Vector Store...")
