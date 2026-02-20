@@ -51,7 +51,10 @@ def cleanup_ephemeral_data():
         with engine.connect() as conn:
             for table in st.session_state.temp_tables:
                 try:
-                    conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+                    if not table.replace("_", "").isalnum():
+                        print(f"Skipping invalid table name: {table}")
+                        continue
+                    conn.execute(text(f"DROP TABLE IF EXISTS \"{table}\""))
                     conn.commit()
                 except Exception as e:
                     print(f"SQL Cleanup error: {e}")
@@ -107,34 +110,72 @@ def process_uploaded_file(uploaded_file, consent):
         # PATH 2: UNSTRUCTURED DATA -> VECTOR DB
         # ==========================================
         elif file_name.endswith('.pdf'):
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp.write(uploaded_file.getvalue())
-                        tmp_path = tmp.name
-                    
-                    # 1. Fast Markdown Extraction (Preserves Tables!)
-                    md_text = pymupdf4llm.to_markdown(tmp_path)
-                    
-                    # 2. Chunk the Markdown intelligently
-                    # Markdown splitter ensures tables aren't cut in half
-                    splitter = MarkdownTextSplitter(chunk_size=1000, chunk_overlap=100)
-                    chunks = splitter.split_text(md_text)
-                    
-                    # 3. Convert to LangChain Document objects
-                    docs = [Document(page_content=chunk, metadata={"source": file_name}) for chunk in chunks]
-                    
-                    # 4. Embed and Store
-                    embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=DEFAULT_OLLAMA_URL)
-                    vectorstore = Chroma(persist_directory=vector_path, embedding_function=embeddings)
-                    
-                    doc_ids = vectorstore.add_documents(docs)
-                    
-                    if not consent:
-                        st.session_state.temp_doc_ids.extend(doc_ids)
-                        st.sidebar.success("PDF loaded securely for this session only.")
-                    else:
-                        st.sidebar.success("PDF saved to persistent database.")
-                        
-                    os.unlink(tmp_path)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(uploaded_file.getvalue())
+                tmp_path = tmp.name
+
+            # 1. Fast Markdown Extraction (Preserves Tables!)
+            md_text = pymupdf4llm.to_markdown(tmp_path)
+
+            # 2. Chunk the Markdown intelligently
+            # Markdown splitter ensures tables aren't cut in half
+            splitter = MarkdownTextSplitter(chunk_size=1000, chunk_overlap=100)
+            chunks = splitter.split_text(md_text)
+
+            # 3. Convert to LangChain Document objects
+            docs = [Document(page_content=chunk, metadata={"source": file_name}) for chunk in chunks]
+
+            # 4. Embed and Store
+            embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=DEFAULT_OLLAMA_URL)
+            vectorstore = Chroma(persist_directory=vector_path, embedding_function=embeddings)
+
+            doc_ids = vectorstore.add_documents(docs)
+
+            if not consent:
+                st.session_state.temp_doc_ids.extend(doc_ids)
+                st.sidebar.success("PDF loaded securely for this session only.")
+            else:
+                st.sidebar.success("PDF saved to persistent database.")
+
+            os.unlink(tmp_path)
+
+        # ==========================================
+        # PATH 3: DOCUMENT FILES -> VECTOR DB
+        # ==========================================
+        elif file_name.endswith(('.docx', '.txt', '.md')):
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp:
+                tmp.write(uploaded_file.getvalue())
+                tmp_path = tmp.name
+
+            # Load document based on type
+            if file_name.endswith('.docx'):
+                loader = Docx2txtLoader(tmp_path)
+            else:
+                loader = TextLoader(tmp_path)
+
+            raw_docs = loader.load()
+            raw_text = "\n".join([doc.page_content for doc in raw_docs])
+
+            # Chunk the text
+            splitter = MarkdownTextSplitter(chunk_size=1000, chunk_overlap=100)
+            chunks = splitter.split_text(raw_text)
+
+            # Convert to LangChain Document objects
+            docs = [Document(page_content=chunk, metadata={"source": file_name}) for chunk in chunks]
+
+            # Embed and Store
+            embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=DEFAULT_OLLAMA_URL)
+            vectorstore = Chroma(persist_directory=vector_path, embedding_function=embeddings)
+
+            doc_ids = vectorstore.add_documents(docs)
+
+            if not consent:
+                st.session_state.temp_doc_ids.extend(doc_ids)
+                st.sidebar.success(f"{os.path.splitext(file_name)[1].upper()} file loaded securely for this session only.")
+            else:
+                st.sidebar.success(f"{os.path.splitext(file_name)[1].upper()} file saved to persistent database.")
+
+            os.unlink(tmp_path)
 
         else:
             st.sidebar.error("Unsupported file type.")
@@ -153,7 +194,7 @@ st.markdown("### AI Financial Advisor for Kenya")
 
 # --- SIDEBAR: UPLOAD & CONSENT ---
 st.sidebar.header("📁 Data Upload & Security")
-st.sidebar.markdown("Upload your own financial reports or datasets.")
+st.sidebar.markdown("Upload your own financial reports or datasets (Max 10 files).")
 st.sidebar.info("💡 **Tip:** For best results, upload raw data (like financial ledgers) as **CSV/Excel**. Upload narrative reports as **PDFs**.")
 
 consent = st.sidebar.checkbox(
@@ -162,19 +203,24 @@ consent = st.sidebar.checkbox(
     help="If unchecked, your data is treated as ephemeral. It will be deleted instantly when you clear the chat."
 )
 
-uploaded_file = st.sidebar.file_uploader("Upload PDF or CSV", type=['pdf', 'csv'])
+uploaded_files = st.sidebar.file_uploader(
+    "Upload PDF, CSV, XLSX, DOCX, TXT", 
+    type=['pdf', 'csv', 'xlsx', 'xls', 'docx', 'txt', 'md'],
+    accept_multiple_files=True
+)
 
-if uploaded_file:
-    with st.sidebar:
-        with st.spinner("Processing file..."):
-            process_uploaded_file(uploaded_file, consent)
+if uploaded_files:
+    # Enforce the 10 file limit
+    if len(uploaded_files) > 10:
+        st.sidebar.error("⚠️ Please upload a maximum of 10 files at a time.")
+    else:
+        with st.sidebar:
+            with st.spinner(f"Processing {len(uploaded_files)} file(s)..."):
+                # Loop through all uploaded files
+                for uploaded_file in uploaded_files:
+                    process_uploaded_file(uploaded_file, consent)
 
 st.sidebar.markdown("---")
-if st.sidebar.button("🗑️ Clear Chat & Ephemeral Data"):
-    cleanup_ephemeral_data()
-    st.session_state.messages = []
-    st.session_state.uploaded_files = set()
-    st.rerun()
 
 # --- AGENT INITIALIZATION ---
 if "agent" not in st.session_state:
