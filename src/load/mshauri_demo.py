@@ -7,11 +7,11 @@ import time
 from contextlib import redirect_stdout
 from typing import Any, List, Optional, Mapping
 
-# --- NEW IMPORT FOR TRANSLATION ---
+# --- IMPORT FOR TRANSLATION ---
 from deep_translator import GoogleTranslator
 
 # Replaces HuggingFaceEndpoint with the robust Client
-from huggingface_hub import InferenceClient 
+from huggingface_hub import InferenceClient
 from langchain_core.language_models.llms import LLM
 
 from langchain_ollama import ChatOllama
@@ -19,12 +19,14 @@ from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits.sql.toolkit import SQLDatabaseToolkit
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import OllamaEmbeddings
+from langchain_groq import ChatGroq
+from langchain_google_genai import ChatGoogleGenerativeAI
 
 # --- CONFIGURATION ---
 DEFAULT_SQL_DB = "sqlite:///mshauri_fedha_v6.db"
 DEFAULT_VECTOR_DB = "mshauri_fedha_chroma_db"
 DEFAULT_EMBED_MODEL = "nomic-embed-text"
-DEFAULT_LLM_MODEL = "qwen2.5:3b" 
+DEFAULT_LLM_MODEL = "qwen2.5:7b" 
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 
 # --- CUSTOM WRAPPER ---
@@ -77,9 +79,83 @@ CANDIDATE_MODELS = [
     "Qwen/Qwen2.5-7B-Instruct",                 # Lightweight
     "deepseek-ai/DeepSeek-R1-Distill-Llama-8B", # Smartest Logic
     "meta-llama/Meta-Llama-3.1-8B-Instruct",    # High Availability
-    "mistralai/Mistral-Nemo-Instruct-2407",     # Large Context
+    "mistralai/Mistral-Nemo-Instruct-2407",      # Large Context
     "HuggingFaceH4/zephyr-7b-beta",             # Old Reliable
 ]
+
+
+def get_robust_llm():
+    """Builds an LLM with a resilient fallback cascade.
+
+    Priority order:
+        1. Hugging Face  (Qwen 72B)     - requires HF_TOKEN
+        2. Groq          (Llama 70B)    - requires GROQ_API_KEY
+        3. Gemini        (1.5 Flash)    - requires GEMINI_API_KEY
+        4. Local Ollama  (Qwen 3B)      - always available
+    """
+    llm = None
+    fallbacks = []
+
+    # PRIMARY: Hugging Face (Qwen 72B)
+    hf_token = os.getenv("HF_TOKEN")
+    if hf_token:
+        print("HF Token found. Testing models for Primary LLM...", flush=True)
+        for model_id in CANDIDATE_MODELS:
+            print(f"Trying HF model: {model_id}...", flush=True)
+            try:
+                candidate_llm = HuggingFaceChat(repo_id=model_id, hf_token=hf_token, temperature=0.1)
+                candidate_llm.invoke("Ping") # Test connection
+                llm = candidate_llm
+                print(f"Primary LLM: Hugging Face ({model_id})", flush=True)
+                break
+            except Exception as e:
+                print(f"Failed {model_id}: {str(e)[:100]}...", flush=True)
+                time.sleep(0.5)
+
+    # FIRST FALLBACK: Groq (Llama-3.3-70B)
+    groq_key = os.getenv("GROQ_API_KEY")
+    if groq_key:
+        groq_llm = ChatGroq(
+            model="llama-3.3-70b-versatile",
+            temperature=0.1,
+            api_key=groq_key,
+        )
+        if llm is None:
+            llm = groq_llm
+            print("Primary LLM: Groq (Llama 70B)", flush=True)
+        else:
+            fallbacks.append(groq_llm)
+            print("Added Fallback 1: Groq", flush=True)
+
+    # SECOND FALLBACK: Gemini (1.5 Flash)
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        gemini_llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",
+            temperature=0.1,
+            google_api_key=gemini_key,
+        )
+        if llm is None:
+            llm = gemini_llm
+            print("Primary LLM: Gemini (1.5 Flash)", flush=True)
+        else:
+            fallbacks.append(gemini_llm)
+            print("Added Fallback 2: Gemini", flush=True)
+
+    # FINAL FALLBACK: Local Ollama (Qwen 7B)
+    local_llm = ChatOllama(model="qwen2.5:7b", temperature=0)
+    if llm is None:
+        llm = local_llm
+        print("Primary LLM: Local Ollama (Qwen 7B)", flush=True)
+    else:
+        fallbacks.append(local_llm)
+        print("Added Final Fallback: Local Ollama", flush=True)
+
+    # Bind fallbacks so LangChain auto-routes on failure
+    if fallbacks and hasattr(llm, "with_fallbacks"):
+        return llm.with_fallbacks(fallbacks)
+
+    return llm
 
 # --- 1. REPLACEMENT CLASS FOR 'Tool' ---
 class SimpleTool:
@@ -329,44 +405,14 @@ class MultilingualAgent:
 def create_mshauri_agent(
     sql_db_path=DEFAULT_SQL_DB,
     vector_db_path=DEFAULT_VECTOR_DB,
-    llm_model=DEFAULT_LLM_MODEL,
     ollama_url=DEFAULT_OLLAMA_URL):
-    print(f"Initializing Mshauri Fedha...")
-    
-    hf_token = os.getenv("HF_TOKEN")
-    llm = None
+    print("Initializing Mshauri Fedha...", flush=True)
 
-    # 1. ROBUST SERVERLESS LOADING LOOP
-    if hf_token:
-        print("HF Token found. Testing models...", flush=True)
-        
-        for model_id in CANDIDATE_MODELS:
-            print(f"Trying model: {model_id}...", flush=True)
-            try:
-                # USE CUSTOM WRAPPER
-                candidate_llm = HuggingFaceChat(
-                    repo_id=model_id, 
-                    hf_token=hf_token,
-                    temperature=0.1
-                )
-                # TEST CALL
-                candidate_llm.invoke("Ping")
-                
-                print(f"SUCCESS: Connected to {model_id}", flush=True)
-                llm = candidate_llm
-                break
-            except Exception as e:
-                print(f"Failed: {str(e)[:100]}...", flush=True)
-                time.sleep(1)
-
-    # FALLBACK
-    if not llm:
-        print("\nFalling back to Local CPU Ollama...", flush=True)
-        try:
-            llm = ChatOllama(model="qwen2.5:3b", base_url=ollama_url, temperature=0.1)
-        except Exception as e:
-            print(f"Error connecting to Ollama: {e}")
-            return None
+    # Build a resilient LLM with automatic fallback cascade
+    llm = get_robust_llm()
+    if llm is None:
+        print("Error: No LLM could be initialised. Check your API keys and Ollama service.")
+        return None
 
     # TOOLS
     if "sqlite" in sql_db_path:
@@ -384,28 +430,36 @@ def create_mshauri_agent(
 
     def search_docs(query):
         embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=ollama_url)
-        vectorstore = Chroma(persist_directory=vector_db_path, embedding_function=embeddings)
-        
-        # Get L2 Distance (Lower is better)
-        results = vectorstore.similarity_search_with_score(query, k=5)
-        
+
+        # The Chroma collection was created with default L2 distance (no cosine metadata).
+        # nomic-embed-text produces unit-normalised vectors, so we can recover exact cosine
+        # similarity from L2 distance using: cosine_sim = 1 - (l2_distance^2 / 2)
+        # We pass this as a custom relevance_score_fn so LangChain uses it instead of
+        # its default L2 normalisation formula (1 - l2/2), giving true cosine percentages.
+        def cosine_from_l2(l2_distance: float) -> float:
+            cosine_sim = 1.0 - (l2_distance ** 2) / 2.0
+            # Clamp to [0, 1] to guard against floating-point edge cases
+            return max(0.0, min(1.0, cosine_sim))
+
+        vectorstore = Chroma(
+            persist_directory=vector_db_path,
+            embedding_function=embeddings,
+            relevance_score_fn=cosine_from_l2,
+        )
+
+        # Returns (doc, cosine_similarity) pairs in [0, 1]
+        results = vectorstore.similarity_search_with_relevance_scores(query, k=5)
+
         formatted_results = []
-        
-        # SIGMA: This controls how strict you are.
-        sigma = 350   # pivot point for scaling
-        
-        for doc, score in results:
-            # Gaussian RBF Kernel
-            # Formula: exp( - (score^2) / (2 * sigma^2) )
-            confidence_float = math.exp(- (score**2) / (2 * sigma**2))
-            
-            # Convert to Percentage
-            confidence_pct = int(confidence_float * 100)
-            
-            # Optional: Filter out low confidence noise (< 20%)
+
+        for doc, cosine_sim in results:
+            # Map cosine similarity [0, 1] directly to a percentage
+            confidence_pct = int(cosine_sim * 100)
+
+            # Filter out low-confidence noise (< 20%)
             if confidence_pct < 20:
                 continue
-                
+
             formatted_results.append(f"[Confidence: {confidence_pct}%] {doc.page_content}")
 
         if not formatted_results:
@@ -432,16 +486,16 @@ def ask_mshauri(agent, query):
         print(" Agent not initialized.")
         return
 
-    print(f"\n User: {query}")
+    print(f"\nUser: {query}")
     print("-" * 40)
     
     try:
         response = agent.invoke({"input": query})
         print("-" * 40)
-        print(f" Mshauri: {response['output']}")
+        print(f"Mshauri: {response['output']}")
         return response['output']
     except Exception as e:
-        print(f" Error during execution: {e}")
+        print(f"Error during execution: {e}")
         return None
 
 if __name__ == "__main__":

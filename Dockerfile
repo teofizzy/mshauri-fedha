@@ -42,8 +42,8 @@ CMD git clone https://huggingface.co/datasets/teofizzy/mshauri-data data_downloa
     echo "Starting Ollama..." && \
     ollama serve & \
     sleep 10 && \
-    echo "Pulling Fallback Model (3B)..." && \
-    ollama pull qwen2.5:3b && \
+    echo "Pulling Fallback Model (7B)..." && \
+    ollama pull qwen2.5:7b && \
     ollama pull nomic-embed-text && \
     echo "Models Ready. Launching App..." && \
     streamlit run src/app.py --server.port 7860 --server.address 0.0.0.0
