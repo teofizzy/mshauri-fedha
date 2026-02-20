@@ -14,3 +14,5 @@ deep-translator
 pypdf
 openpyxl
 docx2txt
+pymupdf4llm
+langchain-text-splitters

@@ -10,6 +10,9 @@ import pandas as pd
 from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import OllamaEmbeddings
+import pymupdf4llm
+from langchain_core.documents import Document
+from langchain_text_splitters import MarkdownTextSplitter
 from sqlalchemy import create_engine, text
 
 # --- PATH SETUP ---
@@ -103,36 +106,35 @@ def process_uploaded_file(uploaded_file, consent):
         # ==========================================
         # PATH 2: UNSTRUCTURED DATA -> VECTOR DB
         # ==========================================
-        elif file_name.endswith(('.pdf', '.docx', '.txt', '.md')):
-            # Write to temp file because LangChain loaders require a file path
-            ext = "." + file_name.rsplit('.', 1)[1]
-            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-                tmp.write(uploaded_file.getvalue())
-                tmp_path = tmp.name
-            
-            # Route to the correct LangChain Loader
-            if ext == '.pdf':
-                loader = PyPDFLoader(tmp_path)
-            elif ext == '.docx':
-                loader = Docx2txtLoader(tmp_path) # Requires 'docx2txt'
-            else:
-                loader = TextLoader(tmp_path)
-                
-            docs = loader.load_and_split()
-            
-            embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=DEFAULT_OLLAMA_URL)
-            vectorstore = Chroma(persist_directory=vector_path, embedding_function=embeddings)
-            
-            # Add to DB and retrieve the specific chunk IDs
-            doc_ids = vectorstore.add_documents(docs)
-            
-            if not consent:
-                st.session_state.temp_doc_ids.extend(doc_ids)
-                st.sidebar.success(f"{ext.upper()} loaded securely for this session only.")
-            else:
-                st.sidebar.success(f"{ext.upper()} saved to persistent database.")
-                
-            os.unlink(tmp_path) # Clean up the physical temp file
+        elif file_name.endswith('.pdf'):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                        tmp.write(uploaded_file.getvalue())
+                        tmp_path = tmp.name
+                    
+                    # 1. Fast Markdown Extraction (Preserves Tables!)
+                    md_text = pymupdf4llm.to_markdown(tmp_path)
+                    
+                    # 2. Chunk the Markdown intelligently
+                    # Markdown splitter ensures tables aren't cut in half
+                    splitter = MarkdownTextSplitter(chunk_size=1000, chunk_overlap=100)
+                    chunks = splitter.split_text(md_text)
+                    
+                    # 3. Convert to LangChain Document objects
+                    docs = [Document(page_content=chunk, metadata={"source": file_name}) for chunk in chunks]
+                    
+                    # 4. Embed and Store
+                    embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=DEFAULT_OLLAMA_URL)
+                    vectorstore = Chroma(persist_directory=vector_path, embedding_function=embeddings)
+                    
+                    doc_ids = vectorstore.add_documents(docs)
+                    
+                    if not consent:
+                        st.session_state.temp_doc_ids.extend(doc_ids)
+                        st.sidebar.success("PDF loaded securely for this session only.")
+                    else:
+                        st.sidebar.success("PDF saved to persistent database.")
+                        
+                    os.unlink(tmp_path)
 
         else:
             st.sidebar.error("Unsupported file type.")
@@ -152,6 +154,7 @@ st.markdown("### AI Financial Advisor for Kenya")
 # --- SIDEBAR: UPLOAD & CONSENT ---
 st.sidebar.header("📁 Data Upload & Security")
 st.sidebar.markdown("Upload your own financial reports or datasets.")
+st.sidebar.info("💡 **Tip:** For best results, upload raw data (like financial ledgers) as **CSV/Excel**. Upload narrative reports as **PDFs**.")
 
 consent = st.sidebar.checkbox(
     "I consent to securely storing this document in the database for future reference.", 
