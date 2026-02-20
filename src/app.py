@@ -199,7 +199,7 @@ st.sidebar.markdown("Upload your own financial reports or datasets (Max 10 files
 st.sidebar.info("💡 **Tip:** For best results, upload raw data (like financial ledgers) as **CSV/Excel**. Upload narrative reports as **PDFs**.")
 
 consent = st.sidebar.checkbox(
-    "I consent to securely storing this document in the database for future reference.", 
+    "I consent to securely storing this document in the active database (not persistent).", 
     value=False,
     help="If unchecked, your data is treated as ephemeral. It will be deleted instantly when you clear the chat."
 )
@@ -263,16 +263,25 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 if prompt := st.chat_input("Ask about inflation, your uploaded data, or economic trends..."):
+    # Display the user's raw prompt in the UI
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
+
+    # CONTEXT INJECTION: Secretly tell the agent about the uploaded files
+    augmented_prompt = prompt
+    if st.session_state.uploaded_files:
+        files_str = ", ".join(st.session_state.uploaded_files)
+        augmented_prompt = f"Context: The user has just uploaded the following files: {files_str}. Please prioritize searching these documents and querying their corresponding SQL tables (prefixed with 'user_upload_') to answer the following question.\n\nQuestion: {prompt}"
 
     with st.chat_message("assistant"):
         with st.spinner("Analyzing..."):
             try:
                 if st.session_state.agent:
-                    response = st.session_state.agent.invoke({"input": prompt})
+                    # Send the AUGMENTED prompt to the agent, not just the raw prompt
+                    response = st.session_state.agent.invoke({"input": augmented_prompt})
                     output_text = response.get("output", "Error generating response.")
+                    
                     st.markdown(output_text)
                     st.session_state.messages.append({"role": "assistant", "content": output_text})
                 else:

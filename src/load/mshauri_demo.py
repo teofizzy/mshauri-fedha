@@ -71,6 +71,7 @@ class HuggingFaceChat(LLM):
 
 # --- ROBUST MODEL LIST ---
 CANDIDATE_MODELS = [
+    "Qwen/Qwen1.5-110B-Chat",                   # Most Powerful
     "Qwen/Qwen2.5-72B-Instruct",                # Most Powerful
     "Qwen/Qwen2.5-32B-Instruct",                # Powerful & Balanced
     "Qwen/Qwen2.5-14B-Instruct",                # Faster Alternative
