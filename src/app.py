@@ -107,7 +107,7 @@ def process_uploaded_file(uploaded_file, consent):
                 st.sidebar.success(f"Spreadsheet saved persistently as `{safe_table_name}`.")
 
         # ==========================================
-        # PATH 2: UNSTRUCTURED DATA -> VECTOR DB
+        # PATH 2: UNSTRUCTURED DATA -> VECTOR DB (PDF)
         # ==========================================
         elif file_name.endswith('.pdf'):
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -118,7 +118,6 @@ def process_uploaded_file(uploaded_file, consent):
             md_text = pymupdf4llm.to_markdown(tmp_path)
 
             # 2. Chunk the Markdown intelligently
-            # Markdown splitter ensures tables aren't cut in half
             splitter = MarkdownTextSplitter(chunk_size=1000, chunk_overlap=100)
             chunks = splitter.split_text(md_text)
 
@@ -130,17 +129,18 @@ def process_uploaded_file(uploaded_file, consent):
             vectorstore = Chroma(persist_directory=vector_path, embedding_function=embeddings)
 
             doc_ids = vectorstore.add_documents(docs)
+            vectorstore.persist()  # Flush data to disk immediately
 
             if not consent:
                 st.session_state.temp_doc_ids.extend(doc_ids)
                 st.sidebar.success("PDF loaded securely for this session only.")
             else:
-                st.sidebar.success("PDF saved to persistent database.")
+                st.sidebar.success("PDF saved to active database.")
 
             os.unlink(tmp_path)
 
         # ==========================================
-        # PATH 3: DOCUMENT FILES -> VECTOR DB
+        # PATH 3: DOCUMENT FILES -> VECTOR DB (TXT/DOCX)
         # ==========================================
         elif file_name.endswith(('.docx', '.txt', '.md')):
             with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp:
@@ -168,12 +168,13 @@ def process_uploaded_file(uploaded_file, consent):
             vectorstore = Chroma(persist_directory=vector_path, embedding_function=embeddings)
 
             doc_ids = vectorstore.add_documents(docs)
+            vectorstore.persist()  # FIX 1: Flush data to disk immediately
 
             if not consent:
                 st.session_state.temp_doc_ids.extend(doc_ids)
                 st.sidebar.success(f"{os.path.splitext(file_name)[1].upper()} file loaded securely for this session only.")
             else:
-                st.sidebar.success(f"{os.path.splitext(file_name)[1].upper()} file saved to persistent database.")
+                st.sidebar.success(f"{os.path.splitext(file_name)[1].upper()} file saved to active database.")
 
             os.unlink(tmp_path)
 
@@ -214,13 +215,31 @@ if uploaded_files:
     if len(uploaded_files) > 10:
         st.sidebar.error("⚠️ Please upload a maximum of 10 files at a time.")
     else:
+        # Track initial file count to prevent infinite reruns
+        initial_file_count = len(st.session_state.uploaded_files)
+        
         with st.sidebar:
             with st.spinner(f"Processing {len(uploaded_files)} file(s)..."):
                 # Loop through all uploaded files
                 for uploaded_file in uploaded_files:
                     process_uploaded_file(uploaded_file, consent)
+        
+        # If new files were actually processed, delete the cached agent and refresh
+        if len(st.session_state.uploaded_files) > initial_file_count:
+            if "agent" in st.session_state:
+                del st.session_state["agent"]
+            st.rerun()
 
 st.sidebar.markdown("---")
+
+if st.sidebar.button("🗑️ Clear Chat & Ephemeral Data"):
+    cleanup_ephemeral_data()
+    st.session_state.messages = []
+    st.session_state.uploaded_files = set()
+    # Also delete the agent so it drops the ephemeral tables from its memory
+    if "agent" in st.session_state:
+        del st.session_state["agent"]
+    st.rerun()
 
 # --- AGENT INITIALIZATION ---
 if "agent" not in st.session_state:
