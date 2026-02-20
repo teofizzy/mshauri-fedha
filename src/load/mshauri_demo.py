@@ -51,12 +51,12 @@ class HuggingFaceChat(LLM):
                     messages=messages, 
                     max_tokens=self.max_new_tokens, 
                     temperature=self.temperature,
-                    stream=False
+                    stream=False,
+                    stop=stop
                 )
                 content = response.choices[0].message.content
                 
-                # DeepSeek-R1 outputs thoughts in <think> tags. We must strip them 
-                # so the Agent logic doesn't get confused.
+                # Strip <think> tags if present
                 if "<think>" in content:
                     content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
                 
