@@ -129,7 +129,6 @@ def process_uploaded_file(uploaded_file, consent):
             vectorstore = Chroma(persist_directory=vector_path, embedding_function=embeddings)
 
             doc_ids = vectorstore.add_documents(docs)
-            vectorstore.persist()  # Flush data to disk immediately
 
             if not consent:
                 st.session_state.temp_doc_ids.extend(doc_ids)
@@ -168,7 +167,6 @@ def process_uploaded_file(uploaded_file, consent):
             vectorstore = Chroma(persist_directory=vector_path, embedding_function=embeddings)
 
             doc_ids = vectorstore.add_documents(docs)
-            vectorstore.persist()  # FIX 1: Flush data to disk immediately
 
             if not consent:
                 st.session_state.temp_doc_ids.extend(doc_ids)

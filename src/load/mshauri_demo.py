@@ -45,27 +45,27 @@ class HuggingFaceChat(LLM):
         return "hf_chat_api"
 
     def _call(self, prompt: str, stop: Optional[List[str]] = None) -> str:
-            client = InferenceClient(model=self.repo_id, token=self.hf_token)
-            messages = [{"role": "user", "content": prompt}]
-            
-            try:
-                response = client.chat_completion(
-                    messages=messages, 
-                    max_tokens=self.max_new_tokens, 
-                    temperature=self.temperature,
-                    stream=False,
-                    stop=stop
-                )
-                content = response.choices[0].message.content
-                
-                # Strip <think> tags if present
-                if "<think>" in content:
-                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-                
-                return content
-                
-            except Exception as e:
-                raise ValueError(f"API Error: {e}")
+        client = InferenceClient(model=self.repo_id, token=self.hf_token)
+        messages = [{"role": "user", "content": prompt}]
+
+        try:
+            response = client.chat_completion(
+                messages=messages,
+                max_tokens=self.max_new_tokens,
+                temperature=self.temperature,
+                stream=False,
+                stop=stop,
+            )
+            content = response.choices[0].message.content
+
+            # Strip <think> tags if present
+            if "<think>" in content:
+                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+
+            return content
+
+        except Exception as e:
+            raise ValueError(f"API Error: {e}")
 
     @property
     def _identifying_params(self) -> Mapping[str, Any]:
@@ -83,7 +83,6 @@ CANDIDATE_MODELS = [
     "HuggingFaceH4/zephyr-7b-beta",             # Old Reliable
 ]
 
-
 def get_robust_llm():
     """Builds an LLM with a resilient fallback cascade.
 
@@ -91,7 +90,7 @@ def get_robust_llm():
         1. Hugging Face  (Qwen 72B)     - requires HF_TOKEN
         2. Groq          (Llama 70B)    - requires GROQ_API_KEY
         3. Gemini        (1.5 Flash)    - requires GEMINI_API_KEY
-        4. Local Ollama  (Qwen 3B)      - always available
+        4. Local Ollama  (Qwen 7B)      - always available
     """
     llm = None
     fallbacks = []
@@ -153,9 +152,16 @@ def get_robust_llm():
 
     # Bind fallbacks so LangChain auto-routes on failure
     if fallbacks and hasattr(llm, "with_fallbacks"):
-        return llm.with_fallbacks(fallbacks)
+        try:
+            # Langchain handles the coercion between LLM and ChatModel types natively
+            # when using string prompts.
+            robust_llm = llm.with_fallbacks(fallbacks)
+            return robust_llm, llm
+        except Exception as e:
+            print(f"Warning: Fallback binding failed: {e}. Returning base model.", flush=True)
+            return llm, llm
 
-    return llm
+    return llm, llm
 
 # --- 1. REPLACEMENT CLASS FOR 'Tool' ---
 class SimpleTool:
@@ -409,8 +415,9 @@ def create_mshauri_agent(
     print("Initializing Mshauri Fedha...", flush=True)
 
     # Build a resilient LLM with automatic fallback cascade
-    llm = get_robust_llm()
-    if llm is None:
+    # UNPACK BOTH LLMS HERE
+    robust_llm, base_llm = get_robust_llm()
+    if robust_llm is None or base_llm is None:
         print("Error: No LLM could be initialised. Check your API keys and Ollama service.")
         return None
 
@@ -422,7 +429,8 @@ def create_mshauri_agent(
 
     try:
         db = SQLDatabase.from_uri(sql_db_path)
-        sql_toolkit = SQLDatabaseToolkit(db=db, llm=llm)
+        # PASS 'base_llm' to the Toolkit to bypass the Pydantic type-check error
+        sql_toolkit = SQLDatabaseToolkit(db=db, llm=base_llm)
         sql_tools = sql_toolkit.get_tools()
     except Exception as e:
         print(f"SQL Setup Failed: {e}")
@@ -475,7 +483,9 @@ def create_mshauri_agent(
     
     repl_tool = PythonREPLTool()
     tools = sql_tools + [retriever_tool, repl_tool]
-    agent = SimpleReActAgent(llm, tools)
+    
+    # PASS 'robust_llm' to the Agent so its brain has fallback protection
+    agent = SimpleReActAgent(robust_llm, tools)
     
     # WRAP THE AGENT IN TRANSLATION LAYER
     print("Agent Ready (Multilingual Mode).", flush=True)
