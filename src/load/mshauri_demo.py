@@ -4,6 +4,7 @@ import re
 import sys
 import io
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import redirect_stdout
 from typing import Any, List, Optional, Mapping
 
@@ -83,35 +84,109 @@ CANDIDATE_MODELS = [
     "HuggingFaceH4/zephyr-7b-beta",             # Old Reliable
 ]
 
-def get_robust_llm():
-    """Builds an LLM with a resilient fallback cascade.
 
-    Priority order:
+# --- VOTING ENSEMBLE ---
+class VotingLLM:
+    """
+    Calls all available LLMs in parallel and selects the response with
+    the highest peer-consensus score (Jaccard word similarity).
+
+    Models that fail or time out are silently skipped, providing
+    built-in fallback behavior without a separate fallback chain.
+    If ALL models fail, raises ValueError so the agent can handle it.
+    """
+    def __init__(self, llms: list, timeout: int = 45):
+        self.llms = llms
+        self.timeout = timeout
+
+    def invoke(self, prompt, stop=None):
+        def call_one(llm):
+            result = llm.invoke(prompt, stop=stop) if stop else llm.invoke(prompt)
+            text = result if isinstance(result, str) else result.content
+            return text.strip() if text else None
+
+        responses = []
+        with ThreadPoolExecutor(max_workers=len(self.llms)) as executor:
+            futures = {executor.submit(call_one, llm): llm for llm in self.llms}
+            try:
+                for future in as_completed(futures, timeout=self.timeout):
+                    llm_name = futures[future].__class__.__name__
+                    try:
+                        result = future.result()
+                        if result:
+                            responses.append(result)
+                            print(f"Vote received: {llm_name}", flush=True)
+                    except Exception as e:
+                        print(f"Voter {llm_name} failed: {str(e)[:80]}", flush=True)
+            except TimeoutError:
+                print("Voting timed out. Using responses collected so far.", flush=True)
+
+        if not responses:
+            raise ValueError("All LLMs failed to respond during voting.")
+
+        if len(responses) == 1:
+            return responses[0]
+
+        return self._pick_consensus(responses)
+
+    def _pick_consensus(self, responses: list) -> str:
+        """Returns the response with the highest average Jaccard similarity to all others.
+        This is the 'centroid' of the group — the most broadly agreed-upon answer.
+        """
+        best_score, best_response = -1.0, responses[0]
+        for i, r1 in enumerate(responses):
+            words1 = set(r1.lower().split())
+            scores = []
+            for j, r2 in enumerate(responses):
+                if i == j:
+                    continue
+                words2 = set(r2.lower().split())
+                union = len(words1 | words2)
+                scores.append(len(words1 & words2) / union if union else 0.0)
+            avg = sum(scores) / len(scores) if scores else 0.0
+            if avg > best_score:
+                best_score, best_response = avg, r1
+        print(f"Consensus winner: score={best_score:.2f}, voters={len(responses)}", flush=True)
+        return best_response
+
+def get_robust_llm():
+    """Builds a voting ensemble LLM from all available providers.
+
+    All available models vote simultaneously on every query. The response
+    with the highest peer-consensus score (Jaccard word similarity) wins.
+    Models that fail during a vote are silently skipped — providing
+    built-in fallback behavior.
+
+    Priority / collection order:
         1. Hugging Face  (Qwen 72B)     - requires HF_TOKEN
         2. Groq          (Llama 70B)    - requires GROQ_API_KEY
         3. Gemini        (1.5 Flash)    - requires GEMINI_API_KEY
-        4. Local Ollama  (Qwen 7B)      - always available
-    """
-    llm = None
-    fallbacks = []
+        4. Local Ollama  (Qwen 7B)      - always included
 
-    # PRIMARY: Hugging Face (Qwen 72B)
+    Returns:
+        (robust_llm, base_llm)
+        robust_llm: VotingLLM for the agent brain (or single model if only 1 available)
+        base_llm:   Plain highest-priority model for SQLDatabaseToolkit
+    """
+    available_llms = []  # All working models, in priority order
+
+    # 1. HuggingFace — test candidate models until one responds
     hf_token = os.getenv("HF_TOKEN")
     if hf_token:
-        print("HF Token found. Testing models for Primary LLM...", flush=True)
+        print("HF Token found. Testing candidate models...", flush=True)
         for model_id in CANDIDATE_MODELS:
-            print(f"Trying HF model: {model_id}...", flush=True)
+            print(f"  Trying: {model_id}...", flush=True)
             try:
-                candidate_llm = HuggingFaceChat(repo_id=model_id, hf_token=hf_token, temperature=0.1)
-                candidate_llm.invoke("Ping") # Test connection
-                llm = candidate_llm
-                print(f"Primary LLM: Hugging Face ({model_id})", flush=True)
+                candidate = HuggingFaceChat(repo_id=model_id, hf_token=hf_token, temperature=0.1)
+                candidate.invoke("Ping")
+                available_llms.append(candidate)
+                print(f"HF voter ready: {model_id}", flush=True)
                 break
             except Exception as e:
-                print(f"Failed {model_id}: {str(e)[:100]}...", flush=True)
+                print(f"  Failed {model_id}: {str(e)[:100]}...", flush=True)
                 time.sleep(0.5)
 
-    # FIRST FALLBACK: Groq (Llama-3.3-70B)
+    # 2. Groq (Llama-3.3-70B)
     groq_key = os.getenv("GROQ_API_KEY")
     if groq_key:
         groq_llm = ChatGroq(
@@ -119,14 +194,10 @@ def get_robust_llm():
             temperature=0.1,
             api_key=groq_key,
         )
-        if llm is None:
-            llm = groq_llm
-            print("Primary LLM: Groq (Llama 70B)", flush=True)
-        else:
-            fallbacks.append(groq_llm)
-            print("Added Fallback 1: Groq", flush=True)
+        available_llms.append(groq_llm)
+        print("Groq voter ready.", flush=True)
 
-    # SECOND FALLBACK: Gemini (1.5 Flash)
+    # 3. Gemini (1.5 Flash)
     gemini_key = os.getenv("GEMINI_API_KEY")
     if gemini_key:
         gemini_llm = ChatGoogleGenerativeAI(
@@ -134,36 +205,29 @@ def get_robust_llm():
             temperature=0.1,
             google_api_key=gemini_key,
         )
-        if llm is None:
-            llm = gemini_llm
-            print("Primary LLM: Gemini (1.5 Flash)", flush=True)
-        else:
-            fallbacks.append(gemini_llm)
-            print("Added Fallback 2: Gemini", flush=True)
+        available_llms.append(gemini_llm)
+        print("Gemini voter ready.", flush=True)
 
-    # FINAL FALLBACK: Local Ollama (Qwen 7B)
+    # 4. Local Ollama — always included as the guaranteed baseline voter
     local_llm = ChatOllama(model="qwen2.5:7b", temperature=0)
-    if llm is None:
-        llm = local_llm
-        print("Primary LLM: Local Ollama (Qwen 7B)", flush=True)
-    else:
-        fallbacks.append(local_llm)
-        print("Added Final Fallback: Local Ollama", flush=True)
+    available_llms.append(local_llm)
+    print("Ollama voter ready.", flush=True)
 
-    # Bind fallbacks so LangChain auto-routes on failure
-    if fallbacks and hasattr(llm, "with_fallbacks"):
-        try:
-            # Langchain handles the coercion between LLM and ChatModel types natively
-            # when using string prompts.
-            robust_llm = llm.with_fallbacks(fallbacks)
-            return robust_llm, llm
-        except Exception as e:
-            print(f"Warning: Fallback binding failed: {e}. Returning base model.", flush=True)
-            return llm, llm
+    if not available_llms:
+        return None, None
 
-    return llm, llm
+    # base_llm: highest-priority plain model for SQLDatabaseToolkit
+    # (VotingLLM is not a LangChain BaseLanguageModel and cannot be passed to the Toolkit)
+    base_llm = available_llms[0]
 
-# --- 1. REPLACEMENT CLASS FOR 'Tool' ---
+    if len(available_llms) == 1:
+        print("Single voter mode (only Ollama available).", flush=True)
+        return base_llm, base_llm
+
+    print(f"Voting ensemble active: {len(available_llms)} models will collaborate.", flush=True)
+    return VotingLLM(available_llms), base_llm
+
+# --- CLASS FOR 'Tool' ---
 class SimpleTool:
     """A simple wrapper to replace langchain.tools.Tool"""
     def __init__(self, name, func, description):
@@ -191,7 +255,7 @@ class PythonREPLTool(SimpleTool):
         except Exception as e:
             return f"Error executing code: {e}"
 
-# --- 2. CLASS FOR THE AGENT ---
+# --- CLASS FOR THE AGENT ---
 class SimpleReActAgent:
     """A manual ReAct loop that doesn't rely on langchain.agents"""
     def __init__(self, llm, tools, verbose=True):
