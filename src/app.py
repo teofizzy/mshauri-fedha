@@ -4,58 +4,175 @@ sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
 
 import streamlit as st
 import os
+import tempfile
+import pandas as pd
+
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import OllamaEmbeddings
+from sqlalchemy import create_engine, text
 
 # --- PATH SETUP ---
 current_dir = os.getcwd() # Should be /home/user/app in Docker
 load_dir = os.path.join(current_dir, "src", "load")
 sys.path.append(load_dir)
 
-# Import your agent creator
+# Import your agent creator and configurations
 try:
-    from mshauri_demo import create_mshauri_agent
+    from mshauri_demo import create_mshauri_agent, DEFAULT_EMBED_MODEL, DEFAULT_OLLAMA_URL
 except ImportError as e:
     st.error(f"Critical Error: Could not import mshauri_demo. Paths checked: {sys.path}. Details: {e}")
     st.stop()
 
+# --- GLOBALS FOR DB PATHS ---
+# SQLAlchemy requires a URI starting with sqlite:///
+sql_path = f"sqlite:///{os.path.join(current_dir, 'mshauri_fedha_v6.db')}"
+vector_path = os.path.join(current_dir, "mshauri_fedha_chroma_db")
+
+# --- SESSION MANAGEMENT & CLEANUP ---
+def init_session_state():
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "temp_tables" not in st.session_state:
+        st.session_state.temp_tables = []
+    if "temp_doc_ids" not in st.session_state:
+        st.session_state.temp_doc_ids = []
+    if "uploaded_files" not in st.session_state:
+        st.session_state.uploaded_files = set()
+
+def cleanup_ephemeral_data():
+    """Drops temporary SQL tables and ChromaDB chunks if consent was not given."""
+    # 1. Clean up SQL Tables
+    if st.session_state.temp_tables:
+        engine = create_engine(sql_path)
+        with engine.connect() as conn:
+            for table in st.session_state.temp_tables:
+                try:
+                    conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
+                    conn.commit()
+                except Exception as e:
+                    print(f"SQL Cleanup error: {e}")
+        st.session_state.temp_tables = []
+
+    # 2. Clean up Vector DB Documents
+    if st.session_state.temp_doc_ids:
+        try:
+            embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=DEFAULT_OLLAMA_URL)
+            vectorstore = Chroma(persist_directory=vector_path, embedding_function=embeddings)
+            vectorstore.delete(ids=st.session_state.temp_doc_ids)
+        except Exception as e:
+            print(f"Vector Cleanup error: {e}")
+        st.session_state.temp_doc_ids = []
+
+# --- FAST EXTRACTION PIPELINE ---
+def process_uploaded_file(uploaded_file, consent):
+    """Handles fast extraction based on file type and applies consent rules."""
+    file_name = uploaded_file.name
+    
+    # Skip if already processed in this session
+    if file_name in st.session_state.uploaded_files:
+        return
+        
+    st.session_state.uploaded_files.add(file_name)
+
+    try:
+        # --- CSV HANDLING (Fast SQL Dump) ---
+        if file_name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+            # Sanitize table name (e.g., "my data.csv" -> "user_upload_my_data")
+            safe_table_name = "user_upload_" + file_name.replace(".csv", "").replace(" ", "_").lower()
+            
+            engine = create_engine(sql_path)
+            df.to_sql(safe_table_name, con=engine, if_exists='replace', index=False)
+            
+            if not consent:
+                st.session_state.temp_tables.append(safe_table_name)
+                st.sidebar.success(f"CSV Loaded ephemerally! Agent can query `{safe_table_name}`.")
+            else:
+                st.sidebar.success(f"CSV saved persistently as `{safe_table_name}`.")
+
+        # --- PDF HANDLING (Fast Vector Ingestion) ---
+        elif file_name.endswith('.pdf'):
+            # Write to temp file because PyPDFLoader requires a file path
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(uploaded_file.getvalue())
+                tmp_path = tmp.name
+                
+            loader = PyPDFLoader(tmp_path)
+            docs = loader.load_and_split()
+            
+            embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=DEFAULT_OLLAMA_URL)
+            vectorstore = Chroma(persist_directory=vector_path, embedding_function=embeddings)
+            
+            # Add to DB and retrieve the specific chunk IDs
+            doc_ids = vectorstore.add_documents(docs)
+            
+            if not consent:
+                st.session_state.temp_doc_ids.extend(doc_ids)
+                st.sidebar.success("PDF loaded securely for this session only.")
+            else:
+                st.sidebar.success("PDF saved to persistent database.")
+                
+            os.unlink(tmp_path) # Clean up the physical temp file
+
+    except Exception as e:
+        st.sidebar.error(f"Error processing file: {e}")
+
+
+# --- STREAMLIT UI CONFIGURATION ---
 st.set_page_config(page_title="Mshauri Fedha", page_icon="🦁")
+
+init_session_state()
 
 st.title("🦁 Mshauri Fedha")
 st.markdown("### AI Financial Advisor for Kenya")
 
-# Initialize Session State
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# --- SIDEBAR: UPLOAD & CONSENT ---
+st.sidebar.header("📁 Data Upload & Security")
+st.sidebar.markdown("Upload your own financial reports or datasets.")
 
+consent = st.sidebar.checkbox(
+    "I consent to securely storing this document in the database for future reference.", 
+    value=False,
+    help="If unchecked, your data is treated as ephemeral. It will be deleted instantly when you clear the chat."
+)
+
+uploaded_file = st.sidebar.file_uploader("Upload PDF or CSV", type=['pdf', 'csv'])
+
+if uploaded_file:
+    with st.sidebar:
+        with st.spinner("Processing file..."):
+            process_uploaded_file(uploaded_file, consent)
+
+st.sidebar.markdown("---")
+if st.sidebar.button("🗑️ Clear Chat & Ephemeral Data"):
+    cleanup_ephemeral_data()
+    st.session_state.messages = []
+    st.session_state.uploaded_files = set()
+    st.rerun()
+
+# --- AGENT INITIALIZATION ---
 if "agent" not in st.session_state:
     with st.spinner("Initializing Mshauri Brain (Loading Models & Data)..."):
-        # SQLAlchemy requires a URI starting with sqlite:///
-        # We use 4 slashes (sqlite:////) because it is an absolute path on Linux
-        sql_path = f"sqlite:///{os.path.join(current_dir, 'mshauri_fedha_v6.db')}"
-        vector_path = os.path.join(current_dir, "mshauri_fedha_chroma_db")
-        
-        # Check if data exists (Debugging for Space deployment)
+        # Check if baseline data exists (Debugging for Space deployment)
         real_db_path = os.path.join(current_dir, "mshauri_fedha_v6.db")
         if not os.path.exists(real_db_path):
-            st.error(f"Database not found at {real_db_path}. Did the clone fail?")
-            st.stop()
+            st.warning(f"Database not found at {real_db_path}. Using empty state.")
             
         try:
-            # mshauri_demo.py to intelligently pick the API or Local model.
             st.session_state.agent = create_mshauri_agent(
                 sql_db_path=sql_path, 
                 vector_db_path=vector_path
             )
-            st.success("System Ready!")
         except Exception as e:
             st.error(f"Failed to initialize agent: {e}")
 
-# Display Chat History
+# --- CHAT UI ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Handle Input
-if prompt := st.chat_input("Ask about inflation, exchange rates, or economic trends..."):
+if prompt := st.chat_input("Ask about inflation, your uploaded data, or economic trends..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)

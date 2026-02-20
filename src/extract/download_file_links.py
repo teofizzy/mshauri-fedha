@@ -607,19 +607,19 @@ def scrape_kenya_news_maximum(
 
     # Fetch from all sources
     if newsdata_key:
-        print("📰 NewsData.io: ", end="", flush=True)
+        print("NewsData.io: ", end="", flush=True)
         articles = fetch_newsdata_multi(newsdata_key)
         all_articles.extend(articles)
         print(f"{len(articles)} URLs")
 
     if gnews_key:
-        print("📰 GNews.io: ", end="", flush=True)
+        print("GNews.io: ", end="", flush=True)
         articles = fetch_gnews_multi(gnews_key)
         all_articles.extend(articles)
         print(f"{len(articles)} URLs")
 
     if thenewsapi_key:
-        print("📰 TheNewsAPI: ", end="", flush=True)
+        print("TheNewsAPI: ", end="", flush=True)
         articles = fetch_thenewsapi_multi(thenewsapi_key)
         all_articles.extend(articles)
         print(f"{len(articles)} URLs (limited to 3/request on free)")
