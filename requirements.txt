@@ -11,3 +11,6 @@ chromadb
 huggingface_hub
 pysqlite3-binary
 deep-translator
+pypdf
+openpyxl
+docx2txt

@@ -7,7 +7,7 @@ import os
 import tempfile
 import pandas as pd
 
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
 from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import OllamaEmbeddings
 from sqlalchemy import create_engine, text
@@ -65,6 +65,7 @@ def cleanup_ephemeral_data():
         st.session_state.temp_doc_ids = []
 
 # --- FAST EXTRACTION PIPELINE ---
+
 def process_uploaded_file(uploaded_file, consent):
     """Handles fast extraction based on file type and applies consent rules."""
     file_name = uploaded_file.name
@@ -76,29 +77,47 @@ def process_uploaded_file(uploaded_file, consent):
     st.session_state.uploaded_files.add(file_name)
 
     try:
-        # --- CSV HANDLING (Fast SQL Dump) ---
-        if file_name.endswith('.csv'):
-            df = pd.read_csv(uploaded_file)
-            # Sanitize table name (e.g., "my data.csv" -> "user_upload_my_data")
-            safe_table_name = "user_upload_" + file_name.replace(".csv", "").replace(" ", "_").lower()
+        # ==========================================
+        # PATH 1: TABULAR DATA -> SQL DATABASE
+        # ==========================================
+        if file_name.endswith(('.csv', '.xlsx', '.xls')):
+            # Read the file based on extension
+            if file_name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+            else:
+                df = pd.read_excel(uploaded_file) # Requires 'openpyxl'
+                
+            # Sanitize table name (e.g., "Q3 Budget.xlsx" -> "user_upload_q3_budget")
+            safe_name = file_name.rsplit('.', 1)[0].replace(" ", "_").lower()
+            safe_table_name = f"user_upload_{safe_name}"
             
             engine = create_engine(sql_path)
             df.to_sql(safe_table_name, con=engine, if_exists='replace', index=False)
             
             if not consent:
                 st.session_state.temp_tables.append(safe_table_name)
-                st.sidebar.success(f"CSV Loaded ephemerally! Agent can query `{safe_table_name}`.")
+                st.sidebar.success(f"Spreadsheet loaded ephemerally! Agent can query `{safe_table_name}`.")
             else:
-                st.sidebar.success(f"CSV saved persistently as `{safe_table_name}`.")
+                st.sidebar.success(f"Spreadsheet saved persistently as `{safe_table_name}`.")
 
-        # --- PDF HANDLING (Fast Vector Ingestion) ---
-        elif file_name.endswith('.pdf'):
-            # Write to temp file because PyPDFLoader requires a file path
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        # ==========================================
+        # PATH 2: UNSTRUCTURED DATA -> VECTOR DB
+        # ==========================================
+        elif file_name.endswith(('.pdf', '.docx', '.txt', '.md')):
+            # Write to temp file because LangChain loaders require a file path
+            ext = "." + file_name.rsplit('.', 1)[1]
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
                 tmp.write(uploaded_file.getvalue())
                 tmp_path = tmp.name
+            
+            # Route to the correct LangChain Loader
+            if ext == '.pdf':
+                loader = PyPDFLoader(tmp_path)
+            elif ext == '.docx':
+                loader = Docx2txtLoader(tmp_path) # Requires 'docx2txt'
+            else:
+                loader = TextLoader(tmp_path)
                 
-            loader = PyPDFLoader(tmp_path)
             docs = loader.load_and_split()
             
             embeddings = OllamaEmbeddings(model=DEFAULT_EMBED_MODEL, base_url=DEFAULT_OLLAMA_URL)
@@ -109,14 +128,17 @@ def process_uploaded_file(uploaded_file, consent):
             
             if not consent:
                 st.session_state.temp_doc_ids.extend(doc_ids)
-                st.sidebar.success("PDF loaded securely for this session only.")
+                st.sidebar.success(f"{ext.upper()} loaded securely for this session only.")
             else:
-                st.sidebar.success("PDF saved to persistent database.")
+                st.sidebar.success(f"{ext.upper()} saved to persistent database.")
                 
             os.unlink(tmp_path) # Clean up the physical temp file
 
+        else:
+            st.sidebar.error("Unsupported file type.")
+
     except Exception as e:
-        st.sidebar.error(f"Error processing file: {e}")
+        st.sidebar.error(f"Error processing {file_name}: {e}")
 
 
 # --- STREAMLIT UI CONFIGURATION ---
